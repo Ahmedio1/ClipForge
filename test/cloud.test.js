@@ -190,6 +190,29 @@ t('removing a source without ?videos=1 keeps its videos', async () => {
   assert.ok(fs.existsSync(path.join(CLIPS, 'Cloud', 'Garde', 'TEKKEN™8 2026-10-01 20-00-00.mp4')));
 });
 
+t('iCloud Photos layout: album names the clip, the trash album is never imported', async () => {
+  const lib = path.join(TMP, 'icloud');
+  makeVideo(path.join(lib, 'PrimarySync', 'Videos', 'IMG_0001.MOV'));
+  makeVideo(path.join(lib, 'PrimarySync', 'Recently Deleted', 'IMG_0002.MOV'));
+  const { body: src } = await post('/api/cloud/sources', { name: 'iPhone', type: 'local', params: { path: lib } });
+  await post(`/api/cloud/sources/${src.id}/sync`);
+  const clip = await waitFor(async () => (await api('/api/clips')).body.find((c) => c.filename === 'IMG_0001.MOV'), 'iCloud clip');
+  assert.equal(clip.game, 'Videos', 'not "PrimarySync"');
+  await sleep(1500);
+  assert.ok(!(await api('/api/clips')).body.some((c) => c.filename === 'IMG_0002.MOV'), 'trash skipped');
+  assert.ok(!fs.existsSync(path.join(CLIPS, 'Cloud', 'iPhone', 'PrimarySync', 'Recently Deleted')));
+  await api(`/api/cloud/sources/${src.id}?videos=1`, { method: 'DELETE' });
+});
+
+t('iCloud Photos sources follow the "Videos" album by default', async () => {
+  const { body: src } = await post('/api/cloud/sources', {
+    type: 'iclouddrive', params: { apple_id: 'moi@icloud.com', password: 'x', service: 'photos' },
+  });
+  const { body } = await api('/api/cloud');
+  assert.equal(body.sources.find((x) => x.id === src.id).folder, 'PrimarySync/Videos');
+  await api(`/api/cloud/sources/${src.id}`, { method: 'DELETE' });
+});
+
 t('missing folder and missing fields are refused', async () => {
   assert.equal((await post('/api/cloud/sources', { type: 'local', params: { path: '/nope/nope' } })).status, 400);
   assert.equal((await post('/api/cloud/sources', { type: 'mega', params: { user: 'a@b.c' } })).status, 400);

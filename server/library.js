@@ -91,7 +91,9 @@ async function addOrRefresh(file, clipsDir) {
     // the first folder names the game, except ClipForge's own folders: Imports/ and
     // Cloud/<source>/ (there, the folder below the source's one does)
     const parts = relDir && !relDir.startsWith('..') ? relDir.split(path.sep) : [];
-    const folderGame = parts[0] === 'Cloud' ? (parts[2] ?? null) : parts[0] === 'Imports' ? null : (parts[0] ?? null);
+    // iCloud Photos nests albums under technical library folders (PrimarySync, SharedSync-…)
+    const cloudParts = parts[0] === 'Cloud' ? parts.slice(2).filter((p) => !/^(PrimarySync|SharedSync)/.test(p)) : [];
+    const folderGame = parts[0] === 'Cloud' ? (cloudParts[0] ?? null) : parts[0] === 'Imports' ? null : (parts[0] ?? null);
     const game = parsed.game || folderGame || UNKNOWN_GAME;
     db.exec('BEGIN');
     try {

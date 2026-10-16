@@ -194,6 +194,11 @@ export async function createSource({ name, type, params = {} }) {
     return getSource.get(id);
   }
 
+  // iCloud Photos: "All Photos" holds everything and every album repeats it, so following the
+  // whole library would import each video several times; the "Videos" album is the right default.
+  if (type === 'iclouddrive' && kv.service === 'photos') {
+    db.prepare('UPDATE cloud_sources SET folder = ? WHERE id = ?').run('PrimarySync/Videos', id);
+  }
   setups.set(id, { phase: 'working' });
   const args = ['config', 'create', remote, type, ...Object.entries(kv).map(([k, v]) => `${k}=${v}`), '--non-interactive'];
   rclone(args).then((r) => handleStep(id, r)).catch((err) => fail(id, err));
@@ -308,7 +313,10 @@ export async function syncSource(id) {
     fs.mkdirSync(dest, { recursive: true });
     let last = { transfers: 0, total: 0 };
     const from = src.type === 'local' ? src.folder : remotePath(src, src.folder);
-    const args = ['copy', from, dest, '--include', VIDEO_GLOB, '--use-json-log', '-v', '--stats', '1s', '--stats-log-level', 'NOTICE'];
+    // never bring back what the user deleted (iCloud Photos' trash album)
+    // ordered rules (mixing --include and --exclude has no defined order in rclone)
+    const args = ['copy', from, dest, '--filter', '- Recently Deleted/**', '--filter', `+ ${VIDEO_GLOB}`, '--filter', '- *',
+      '--use-json-log', '-v', '--stats', '1s', '--stats-log-level', 'NOTICE'];
     if (src.max_age_days > 0) args.push('--max-age', `${src.max_age_days}d`);
     let buffer = '';
     const { code, stderr } = await rclone(args, {
