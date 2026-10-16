@@ -185,7 +185,8 @@ async function bestOf(btn, useAi) {
   btn.disabled = true;
   try {
     const job = await api('/api/projects/auto', {
-      method: 'POST', body: JSON.stringify({ clipIds: [...state.selected], maxDuration: 60, ai: useAi }),
+      method: 'POST',
+      body: JSON.stringify({ clipIds: [...state.selected], maxDuration: 60, ai: useAi, replay: true, order: 'crescendo' }),
     });
     const { projectId } = await waitJob(job, (j) => { btn.textContent = j.message || 'Analyse…'; });
     $('#selbar-clear').click();
@@ -414,8 +415,8 @@ const selectedFormat = () => $('input[name=format]:checked').value;
 
 function updateMask() {
   const fmt = selectedFormat();
-  // the fight layout's tracked camera is only computed at render time
-  $('#ed-mask').hidden = fmt === 'original' || fmt === 'vertical-fight';
+  // tracked layouts are only computed at render time
+  $('#ed-mask').hidden = !['vertical-blur', 'vertical-crop'].includes(fmt);
   $('#ed-mask').classList.toggle('blur', fmt === 'vertical-blur');
 }
 $$('input[name=format]').forEach((r) => r.addEventListener('change', updateMask));

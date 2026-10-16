@@ -213,3 +213,141 @@ test('piecewise expression interpolates between keyframes and holds outside', ()
   assert.equal(evalExpr(e, 1.5), 2);
   assert.equal(evalExpr(e, 9), 2);
 });
+
+// ---- montage effects: speed, impacts, looks, beats, generic follow ------------------------
+
+import { impactFilter, shapeBestOf } from '../server/montage.js';
+import { motionCentre, planFollow, followFilter } from '../server/camera.js';
+import { beatsFromEnvelope, loopBeats } from '../server/beats.js';
+
+const graphOf = (out) => out.passes[0].args[out.passes[0].args.indexOf('-filter_complex') + 1];
+
+test('new style fields and per-clip effects are sanitized', () => {
+  const d = sanitizeProjectData({
+    fit: 'follow', grade: 'cinema', progressBar: 1, beatSync: 'yes', duck: false,
+    segments: [{ clipId: 1, start: 0, end: 2, speed: 0.5, impact: 1.2 }, { clipId: 1, speed: 3, impact: 'x' }],
+  });
+  assert.equal(d.fit, 'follow');
+  assert.deepEqual([d.grade, d.progressBar, d.beatSync, d.duck], ['cinema', true, true, false]);
+  assert.deepEqual(d.segments.map((s) => [s.speed, s.impact]), [[0.5, 1.2], [1, null]]);
+  assert.equal(sanitizeProjectData({ grade: 'toString' }).grade, 'none', 'no prototype keys');
+});
+
+test('speed stretches a segment on the timeline and retimes video and audio', () => {
+  const data = sanitizeProjectData({
+    transition: 'none', fadeInOut: false,
+    segments: [{ clipId: 1, start: 0, end: 2, speed: 0.5 }, { clipId: 1, start: 4, end: 8, speed: 2 }, { clipId: 1, start: 0, end: 1, speed: 0.25 }],
+  });
+  assert.deepEqual(planTimeline(data, clips).segments.map((s) => s.dur), [4, 2, 4]);
+  const out = buildMontageArgs(data, clips, { output: '/o.mp4', textDir: '/t' });
+  const graph = graphOf(out);
+  assert.equal(out.total, 10);
+  assert.match(graph, /setpts=\(PTS-STARTPTS\)\/0\.5,fps=30/);
+  assert.match(graph, /atempo=0\.5,aresample/);
+  assert.match(graph, /atempo=2,aresample/);
+  assert.match(graph, /atempo=0\.5,atempo=0\.5,aresample/, '0.25× chains two atempo (min 0.5 each)');
+  // the input reads the source span, not the timeline length
+  assert.equal(out.passes[0].args[out.passes[0].args.indexOf('-t') + 1], '2.000');
+});
+
+test('impacts land at the right moment of a slowed segment; looks and progress bar are added', () => {
+  const data = sanitizeProjectData({
+    transition: 'none', grade: 'vivid', progressBar: true,
+    segments: [{ clipId: 1, start: 2, end: 6, speed: 0.5, impact: 3 }],
+  });
+  const graph = graphOf(buildMontageArgs(data, clips, { output: '/o.mp4', textDir: '/t' }));
+  // 1 s into the clip at half speed = 2 s into the segment
+  assert.ok(graph.includes(impactFilter(2, 1080, 1920)));
+  assert.match(graph, /eq=saturation=1\.3/);
+  assert.match(graph, /color=c=0xffd23f:s=1080x13:r=30:d=8\.000\[pbar\]/);
+  // an impact outside the segment is ignored
+  const off = sanitizeProjectData({ segments: [{ clipId: 1, start: 2, end: 6, impact: 9 }] });
+  assert.ok(!graphOf(buildMontageArgs(off, clips, { output: '/o.mp4', textDir: '/t' })).includes('eval=frame'));
+});
+
+test('9:16-only layouts fall back to bars in 16:9; follow and stack build their graphs', () => {
+  const seg = [{ id: 's', clipId: 1, start: 0, end: 4 }];
+  const land = graphOf(buildMontageArgs(sanitizeProjectData({ format: 'landscape', fit: 'stack', segments: seg }), clips, { output: '/o', textDir: '/t' }));
+  assert.match(land, /pad=1920:1080/);
+  const stack = graphOf(buildMontageArgs(sanitizeProjectData({ fit: 'stack', segments: seg }), clips, { output: '/o', textDir: '/t' }));
+  assert.match(stack, /vstack/);
+  const plan = planFollow([{ sec: 0, cx: 0.8 }, { sec: 1, cx: 0.8 }], { start: 0, end: 1 });
+  const follow = graphOf(buildMontageArgs(sanitizeProjectData({ fit: 'follow', segments: seg }), clips, {
+    output: '/o', textDir: '/t', follows: new Map([['s', plan]]),
+  }));
+  assert.ok(follow.includes(followFilter(plan, 1080, 1920)));
+});
+
+test('music ducking: the game sound drives a sidechain compressor on the music', () => {
+  const base = { transition: 'none', segments: [{ clipId: 1, start: 0, end: 7 }], music: { file: 'm.mp3', volume: 0.5 } };
+  const pass2 = (duck) => {
+    const out = buildMontageArgs(sanitizeProjectData({ ...base, duck }), clips, {
+      output: '/o.mp4', textDir: '/t', musicPath: '/m.mp3', musicDuration: 3,
+    });
+    return out.passes[1].args[out.passes[1].args.indexOf('-filter_complex') + 1];
+  };
+  assert.match(pass2(true), /\[mus\]\[g1\]sidechaincompress/);
+  assert.ok(!pass2(false).includes('sidechaincompress'));
+});
+
+test('beat sync moves each cut to the nearest beat, within the clip', () => {
+  const data = sanitizeProjectData({
+    transition: 'none',
+    segments: [{ clipId: 1, start: 0, end: 2.9 }, { clipId: 1, start: 0, end: 3.2 }, { clipId: 1, start: 0, end: 3 }],
+  });
+  const beats = [0, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 5.5, 6, 6.5, 7];
+  const plan = planTimeline(data, clips, { beats });
+  assert.deepEqual(plan.segments.map((s) => s.dur), [3, 3, 3]);
+  assert.equal(plan.segments[0].end, 3, 'source end follows');
+  // clip 2 is only 4 s long: a cut can't be pushed past its end
+  const short = sanitizeProjectData({ transition: 'none', segments: [{ clipId: 2, start: 3.2, end: 4 }, { clipId: 1, start: 0, end: 2 }] });
+  assert.ok(planTimeline(short, clips, { beats: [0, 1, 2] }).segments[0].end <= 4);
+});
+
+test('beat tracking finds the tempo and phase of a regular kick', () => {
+  const hop = 256 / 11025;
+  const env = Array.from({ length: 1500 }, (_, i) => {
+    const t = i * hop;
+    return (t - 0.3) >= 0 && ((t - 0.3) % 0.5) < hop ? 1 : 0.02 * Math.random();
+  });
+  const { bpm, beats } = beatsFromEnvelope(env);
+  assert.ok(Math.abs(bpm - 120) < 1.5, `bpm ${bpm}`);
+  assert.ok(Math.abs(beats[1] - 0.3) < 0.05 || Math.abs(beats[0] - 0.3) < 0.05, `phase ${beats.slice(0, 2)}`);
+  assert.deepEqual(loopBeats([0.2, 1.2], 2, 5), [0.2, 1.2, 2.2, 3.2, 4.2]);
+});
+
+test('motion centre follows a moving object and ignores HUD bands and still frames', () => {
+  const w = 40;
+  const h = 20;
+  const frame = (x, hudFlicker) => {
+    const f = new Uint8Array(w * h);
+    for (let y = 8; y < 12; y++) for (let i = x; i < x + 3; i++) f[y * w + i] = 255;
+    if (hudFlicker) for (let i = 0; i < w; i++) f[i] = 255; // top row: HUD
+    return f;
+  };
+  const cx = motionCentre([frame(28, 0), frame(30, 1), frame(32, 0)], w, h);
+  assert.ok(cx > 0.65 && cx < 0.9, `cx ${cx}`);
+  assert.equal(motionCentre([frame(10, 0), frame(10, 0)], w, h), null);
+});
+
+test('follow plan fills gaps, smooths, and holds still inside the dead zone', () => {
+  const plan = planFollow([0.5, 0.52, null, 0.51, 0.9, 0.9, 0.9].map((cx, sec) => ({ sec, cx })), { start: 0, end: 6 });
+  const xs = plan.keyframes.map((k) => k.cx);
+  assert.equal(new Set(xs.slice(0, 3)).size, 1, 'small jitter is ignored');
+  assert.ok(xs.at(-1) > 0.8, 'a real move is followed');
+  assert.equal(plan.tracked, 6);
+});
+
+test('best-of shaping: impacts on peaks, crescendo order, slow-motion replay of the best', () => {
+  const picks = [
+    { clipId: 1, start: 0, end: 6, time: 4, score: 0.5 },
+    { clipId: 2, start: 2, end: 8, time: 6, score: 1 },
+    { clipId: 3, start: 1, end: 7, time: 5, score: 0.8 },
+    { clipId: 4, start: 0, end: 6, time: 9, score: 0.3 },
+  ];
+  const segs = shapeBestOf(picks, { order: 'crescendo', replay: true });
+  assert.deepEqual(segs.map((s) => s.clipId), [3, 4, 1, 2, 2]);
+  assert.equal(segs[1].impact, null, 'a peak outside the cut gets no impact');
+  assert.deepEqual(segs.at(-1), { clipId: 2, start: 4.5, end: 6.8, speed: 0.5, impact: 6 });
+  assert.deepEqual(shapeBestOf(picks).map((s) => s.clipId), [1, 2, 3, 4], 'chrono by default, no replay');
+});

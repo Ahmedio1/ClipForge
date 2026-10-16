@@ -1,13 +1,26 @@
 import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
-import { BOX_H, BOX_W, cameraFilter, planCamera } from './camera.js';
+import { BOX_H, BOX_W, cameraFilter, followFilter, planCamera } from './camera.js';
 import { LOUDNORM } from './media.js';
 
 export const CANVAS = {
   landscape: { w: 1920, h: 1080 },
   vertical: { w: 1080, h: 1920 },
 };
-export const FITS = ['blur', 'crop', 'bars', 'fight'];
+// follow = 9:16 window that tracks the action; stack = full view on top, centre zoom below (FPS)
+export const FITS = ['blur', 'crop', 'bars', 'follow', 'stack', 'fight'];
+/** Fits that only make sense in 9:16; in 16:9 they fall back to black bars. */
+const VERTICAL_FITS = ['follow', 'stack', 'fight'];
+export const SPEEDS = [0.25, 0.5, 0.75, 1, 1.5, 2];
+// Colour looks, applied to the whole montage (texts stay true to their colour)
+export const GRADES = {
+  none: null,
+  vivid: 'eq=saturation=1.3:contrast=1.06,unsharp=5:5:0.5',
+  punchy: 'eq=contrast=1.18:saturation=1.22:gamma=0.96,unsharp=5:5:0.8',
+  cinema: 'curves=preset=medium_contrast,colorbalance=rs=-0.04:bs=0.06:rh=0.06:bh=-0.05,eq=saturation=0.92,vignette=PI/5',
+  retro: 'curves=preset=vintage,noise=alls=7:allf=t',
+  bw: 'hue=s=0,eq=contrast=1.15',
+};
 export const TRANSITIONS = ['none', 'fade', 'fadeblack', 'dissolve', 'wipeleft', 'slideleft', 'circleopen', 'zoomin'];
 const TEXT_SIZES = { S: 0.05, M: 0.075, L: 0.11 };
 const TEXT_POSITIONS = ['top', 'center', 'bottom'];
@@ -21,6 +34,10 @@ export function defaultProjectData() {
     transitionDuration: 0.5,
     fadeInOut: true,
     gameVolume: 1,
+    grade: 'none',
+    progressBar: false,
+    beatSync: false, // cuts snap to the music's beat
+    duck: true, // music dips while the game is loud
     segments: [],
     texts: [],
     pool: [],
@@ -44,6 +61,10 @@ export function sanitizeProjectData(input = {}) {
     transitionDuration: num(input.transitionDuration, 0.1, 2, d.transitionDuration),
     fadeInOut: input.fadeInOut !== undefined ? !!input.fadeInOut : d.fadeInOut,
     gameVolume: num(input.gameVolume, 0, 2, d.gameVolume),
+    grade: Object.hasOwn(GRADES, input.grade) ? input.grade : d.grade,
+    progressBar: input.progressBar !== undefined ? !!input.progressBar : d.progressBar,
+    beatSync: input.beatSync !== undefined ? !!input.beatSync : d.beatSync,
+    duck: input.duck !== undefined ? !!input.duck : d.duck,
     segments: (Array.isArray(input.segments) ? input.segments : [])
       .filter((s) => Number.isInteger(Number(s?.clipId)))
       .map((s) => ({
@@ -51,6 +72,9 @@ export function sanitizeProjectData(input = {}) {
         clipId: Number(s.clipId),
         start: num(s.start, 0, 1e6, 0),
         end: num(s.end, 0, 1e6, 0),
+        speed: SPEEDS.includes(Number(s.speed)) ? Number(s.speed) : 1,
+        // clip time of the "impact" (zoom punch + shake + flash), usually the highlight peak
+        impact: s.impact != null && Number.isFinite(Number(s.impact)) ? num(s.impact, 0, 1e6, 0) : null,
       })),
     texts: (Array.isArray(input.texts) ? input.texts : [])
       .filter((t) => typeof t?.text === 'string')
@@ -74,7 +98,8 @@ export function sanitizeProjectData(input = {}) {
 }
 
 /** Style fields a template carries (everything but the clips). */
-export const STYLE_KEYS = ['format', 'fit', 'fps', 'transition', 'transitionDuration', 'fadeInOut', 'gameVolume', 'music'];
+export const STYLE_KEYS = ['format', 'fit', 'fps', 'transition', 'transitionDuration', 'fadeInOut', 'gameVolume', 'music',
+  'grade', 'progressBar', 'beatSync', 'duck'];
 
 /** A template's data: style plus its non-subtitle texts (an `end` ≥ 9999 means "until the end"). */
 export function templateFromProject(data) {
@@ -109,10 +134,53 @@ export const BUILTIN_TEMPLATES = [
     data: { format: 'vertical', fit: 'fight', fps: 60, transition: 'fade', transitionDuration: 0.2, fadeInOut: true, gameVolume: 1, music: null, texts: [] },
   },
   {
+    name: 'FPS / Battle royale (Valorant, CoD, Fortnite…)',
+    data: { format: 'vertical', fit: 'stack', fps: 60, transition: 'fade', transitionDuration: 0.25, fadeInOut: true, gameVolume: 1, grade: 'vivid', progressBar: true, music: null, texts: [] },
+  },
+  {
+    name: 'Sport / Course (FC, Rocket League, Forza…)',
+    data: { format: 'vertical', fit: 'follow', fps: 60, transition: 'slideleft', transitionDuration: 0.3, fadeInOut: true, gameVolume: 1, grade: 'vivid', progressBar: true, music: null, texts: [] },
+  },
+  {
+    name: 'Edit sur le beat',
+    data: { format: 'vertical', fit: 'follow', fps: 60, transition: 'none', transitionDuration: 0.3, fadeInOut: true, gameVolume: 0.8, grade: 'punchy', beatSync: true, duck: true, progressBar: false, music: null, texts: [] },
+  },
+  {
+    name: 'Cinématique (aventure, RPG)',
+    data: { format: 'landscape', fit: 'bars', fps: 30, transition: 'fadeblack', transitionDuration: 0.8, fadeInOut: true, gameVolume: 1, grade: 'cinema', music: null, texts: [] },
+  },
+  {
     name: 'YouTube classique',
     data: { format: 'landscape', fit: 'bars', fps: 60, transition: 'fade', transitionDuration: 0.6, fadeInOut: true, gameVolume: 1, music: null, texts: [] },
   },
 ];
+
+/**
+ * Finishing touches of a best-of. picks: [{ clipId, start, end, time, score }].
+ * Every moment gets an impact on its peak; `order: 'crescendo'` opens on the 2nd best moment
+ * (the hook), builds up and ends on the best one; `replay` adds a slow-motion replay of it.
+ */
+export function shapeBestOf(picks, { order = 'chrono', replay = false } = {}) {
+  let out = picks.map((p) => ({
+    clipId: p.clipId, start: p.start, end: p.end, score: p.score ?? 0,
+    impact: p.time != null && p.time >= p.start && p.time <= p.end ? p.time : null,
+  }));
+  if (order === 'crescendo' && out.length > 2) {
+    const byScore = [...out].sort((a, b) => a.score - b.score);
+    const best = byScore.pop();
+    const hook = byScore.pop();
+    out = [hook, ...byScore, best];
+  }
+  if (replay && out.length) {
+    const best = out.reduce((b, p) => (p.score > b.score ? p : b));
+    const peak = best.impact ?? (best.start + best.end) / 2;
+    out.splice(out.indexOf(best) + 1, 0, {
+      clipId: best.clipId, start: Math.max(best.start, peak - 1.5), end: Math.min(best.end, peak + 0.8),
+      speed: 0.5, impact: best.impact,
+    });
+  }
+  return out.map(({ score, ...seg }) => seg);
+}
 
 let cachedFont;
 export function findFont() {
@@ -188,21 +256,92 @@ function fightLayout(i, seg, plan, { W, H, norm }) {
   ];
 }
 
+/** Full view on top, the centre of the screen (crosshair, ball, car) zoomed in below. */
+function stackLayout(i, seg, { W, H, norm }) {
+  const srcW = seg.clip.width || 1920;
+  const srcH = seg.clip.height || 1080;
+  const even = (n) => Math.round(n / 2) * 2;
+  const topH = even((W * srcH) / srcW);
+  const zoomH = H - topH;
+  const ch = even(srcH * 0.72);
+  const cw = Math.min(srcW, even((ch * W) / zoomH));
+  return [
+    `[${i}:v]setpts=PTS-STARTPTS,split[sa${i}][sb${i}]`,
+    `[sa${i}]scale=${W}:${topH}[st${i}]`,
+    `[sb${i}]crop=${cw}:${ch}:(iw-${cw})/2:(ih-${ch})/2,scale=${W}:${zoomH}[sz${i}]`,
+    `[st${i}][sz${i}]vstack,drawbox=x=0:y=${topH - 3}:w=${W}:h=6:color=black@0.85:t=fill,${norm}[v${i}]`,
+  ];
+}
+
+/**
+ * Zoom punch + shake + white flash around `T` (seconds into the segment): a fast attack and
+ * a slower release, so a hit or a kill "lands".
+ */
+export function impactFilter(T, W, H) {
+  const t = T.toFixed(3);
+  const env = `if(lt(t,${t}),exp(-pow((t-${t})/0.07,2)),exp(-(t-${t})/0.4))`;
+  // clamped so the window never leaves the zoomed frame: (room = scaled size - canvas size) / 2
+  const shake = (dim, size, amp, freq) => `max(-(${dim}-${size})/2,min((${dim}-${size})/2,${amp}*${env}*sin(t*${freq})))`;
+  return [
+    `scale=w='trunc(${W}*(1+0.16*${env})/2)*2':h='trunc(${H}*(1+0.16*${env})/2)*2':eval=frame`,
+    `crop=${W}:${H}:'(iw-${W})/2+${shake('iw', W, 14, 95)}':'(ih-${H})/2+${shake('ih', H, 10, 83)}'`,
+    `eq=brightness='0.28*gte(t,${t})*exp(-(t-${t})/0.07)':eval=frame`,
+  ].join(',');
+}
+
+const atempo = (speed) => {
+  const parts = [];
+  let s = speed;
+  while (s < 0.5) {
+    parts.push('atempo=0.5');
+    s /= 0.5;
+  }
+  if (s !== 1) parts.push(`atempo=${s}`);
+  return parts.length ? `${parts.join(',')},` : '';
+};
+
+/**
+ * Moves every cut (except the last) to the nearest beat, never past the end of its clip and
+ * never shorter than the transition needs. Changes `dur`/`end` in place.
+ */
+function snapToBeats(segments, beats, td) {
+  let pos = 0;
+  for (let k = 0; k < segments.length - 1; k++) {
+    const seg = segments[k];
+    const natural = pos + seg.dur - td; // where the next clip starts showing
+    const maxDur = (seg.clip.duration - seg.start) / seg.speed;
+    const minDur = Math.max(2 * td + 0.05, Math.min(seg.dur, 1));
+    let best = null;
+    for (const b of beats) {
+      const d = b - pos + td;
+      if (d < minDur || d > maxDur) continue;
+      if (best == null || Math.abs(b - natural) < Math.abs(best - natural)) best = b;
+    }
+    if (best != null && Math.abs(best - natural) < 1.5) {
+      seg.dur = best - pos + td;
+      seg.end = seg.start + seg.dur * seg.speed;
+    }
+    pos += seg.dur - td;
+  }
+}
+
 /** Effective segments (clamped to clip duration, too-short ones dropped) and total length. */
-export function planTimeline(data, clipsById) {
+export function planTimeline(data, clipsById, { beats } = {}) {
   const segments = data.segments
     .map((s) => {
       const clip = clipsById.get(s.clipId);
       if (!clip) return null;
       const start = Math.min(s.start, clip.duration);
       const end = Math.min(s.end > s.start ? s.end : clip.duration, clip.duration);
-      return end - start >= 0.3 ? { ...s, start, end, dur: end - start, clip } : null;
+      const speed = s.speed || 1;
+      return end - start >= 0.3 ? { ...s, speed, start, end, dur: (end - start) / speed, clip } : null;
     })
     .filter(Boolean);
 
   const useXfade = data.transition !== 'none' && segments.length > 1;
   const shortest = Math.min(...segments.map((s) => s.dur));
   const td = useXfade ? Math.min(data.transitionDuration, shortest / 2) : 0;
+  if (beats?.length) snapToBeats(segments, beats, td);
   const total = segments.reduce((t, s) => t + s.dur, 0) - td * Math.max(0, segments.length - 1);
   return { segments, td, useXfade, total };
 }
@@ -212,9 +351,11 @@ export function planTimeline(data, clipsById) {
  * `textFiles` receives the text overlays' contents keyed by path to write before running
  * (drawtext reads from files so any user text is safe from filter escaping).
  */
-export function buildMontageArgs(data, clipsById, { output, musicPath, musicDuration, textDir, cameras = new Map(), fontPath = findFont() }) {
+export function buildMontageArgs(data, clipsById, {
+  output, musicPath, musicDuration, textDir, cameras = new Map(), follows = new Map(), beats, fontPath = findFont(),
+}) {
   const { w: W, h: H } = CANVAS[data.format];
-  const { segments, td, useXfade, total } = planTimeline(data, clipsById);
+  const { segments, td, useXfade, total } = planTimeline(data, clipsById, { beats });
   if (segments.length === 0) throw new Error('Le montage ne contient aucun clip');
 
   const args = ['-y', '-v', 'error'];
@@ -222,11 +363,19 @@ export function buildMontageArgs(data, clipsById, { output, musicPath, musicDura
   const textFiles = {};
 
   segments.forEach((s, i) => {
-    args.push('-ss', s.start.toFixed(3), '-t', s.dur.toFixed(3), '-i', s.clip.path);
-    const norm = `fps=${data.fps},format=yuv420p,setsar=1,trim=duration=${s.dur.toFixed(3)},setpts=PTS-STARTPTS,settb=AVTB`;
-    const fit = data.fit === 'fight' && data.format !== 'vertical' ? 'bars' : data.fit;
+    // the source span is (end - start); on the timeline it lasts dur = span / speed
+    args.push('-ss', s.start.toFixed(3), '-t', (s.end - s.start).toFixed(3), '-i', s.clip.path);
+    const hit = s.impact != null && s.impact >= s.start && s.impact <= s.end
+      ? `,${impactFilter((s.impact - s.start) / s.speed, W, H)}` : '';
+    const norm = `setpts=(PTS-STARTPTS)/${s.speed},fps=${data.fps},format=yuv420p,setsar=1,` +
+      `trim=duration=${s.dur.toFixed(3)},setpts=PTS-STARTPTS,settb=AVTB${hit}`;
+    const fit = VERTICAL_FITS.includes(data.fit) && data.format !== 'vertical' ? 'bars' : data.fit;
     if (fit === 'fight') {
       graph.push(...fightLayout(i, s, cameras.get(s.id), { W, H, norm }));
+    } else if (fit === 'stack') {
+      graph.push(...stackLayout(i, s, { W, H, norm }));
+    } else if (fit === 'follow') {
+      graph.push(`[${i}:v]setpts=PTS-STARTPTS,${followFilter(follows.get(s.id), W, H)},${norm}[v${i}]`);
     } else if (fit === 'blur') {
       graph.push(
         `[${i}:v]split[bg${i}][fg${i}]`,
@@ -244,7 +393,9 @@ export function buildMontageArgs(data, clipsById, { output, musicPath, musicDura
     }
     const audioNorm = `aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,` +
       `apad,atrim=0:${s.dur.toFixed(3)},asetpts=PTS-STARTPTS,volume=${data.gameVolume}`;
-    graph.push(s.clip.has_audio
+    graph.push(s.clip.has_audio && s.speed !== 1
+      ? `[${i}:a]asetpts=PTS-STARTPTS,${atempo(s.speed)}${audioNorm}[a${i}]`
+      : s.clip.has_audio
       ? `[${i}:a]${audioNorm}[a${i}]`
       : `anullsrc=r=48000:cl=stereo,${audioNorm}[a${i}]`);
   });
@@ -270,6 +421,12 @@ export function buildMontageArgs(data, clipsById, { output, musicPath, musicDura
       vLabel = `vx${i}`;
       aLabel = `ax${i}`;
     }
+  }
+
+  const grade = GRADES[data.grade];
+  if (grade) {
+    graph.push(`[${vLabel}]${grade}[vg]`);
+    vLabel = 'vg';
   }
 
   // Text overlays
@@ -301,6 +458,14 @@ export function buildMontageArgs(data, clipsById, { output, musicPath, musicDura
     });
     graph.push(`[${vLabel}]${chain.join(',')}[vt]`);
     vLabel = 'vt';
+  }
+
+  if (data.progressBar) {
+    const bh = Math.round(H * 0.007);
+    // a bar sliding in from the left (drawbox's size isn't re-evaluated per frame in ffmpeg 6.0)
+    graph.push(`color=c=0xffd23f:s=${W}x${bh}:r=${data.fps}:d=${total.toFixed(3)}[pbar]`);
+    graph.push(`[${vLabel}][pbar]overlay=x='-w+W*t/${total.toFixed(3)}':y=H-${bh}:eof_action=pass[vp]`);
+    vLabel = 'vp';
   }
 
   // Global fade in/out
@@ -346,11 +511,15 @@ export function buildMontageArgs(data, clipsById, { output, musicPath, musicDura
         '-filter_complex',
         `[1:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,` +
         `atrim=0:${total.toFixed(3)},asetpts=PTS-STARTPTS,volume=${data.music.volume}${fade}[mus];` +
-        `[0:a][mus]amix=inputs=2:duration=first:normalize=0,${LOUDNORM}[am]`,
+        (data.duck
+          // the game's sound pushes the music down (hits, voice), then lets it back up
+          ? `[0:a]asplit=2[g1][g2];[mus][g1]sidechaincompress=threshold=0.05:ratio=6:attack=15:release=400[md];` +
+            `[g2][md]amix=inputs=2:duration=first:normalize=0,${LOUDNORM}[am]`
+          : `[0:a][mus]amix=inputs=2:duration=first:normalize=0,${LOUDNORM}[am]`),
         '-map', '0:v', '-map', '[am]', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k',
         '-t', total.toFixed(3), '-movflags', '+faststart', '-progress', 'pipe:1', output,
       ],
     });
   }
-  return { passes, total, textFiles, tempFiles: withMusic ? [pass1Out] : [] };
+  return { passes, total, segments, textFiles, tempFiles: withMusic ? [pass1Out] : [] };
 }

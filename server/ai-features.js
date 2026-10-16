@@ -1,7 +1,7 @@
 // What the AI does in ClipForge. Every feature builds a context, asks for JSON, validates it.
 import { askJson } from './ai.js';
 import { runBuffer } from './highlights.js';
-import { sanitizeProjectData, CANVAS, FITS, TRANSITIONS } from './montage.js';
+import { sanitizeProjectData, CANVAS, FITS, GRADES, SPEEDS, TRANSITIONS } from './montage.js';
 
 const SYSTEM = `Tu es le monteur vidéo d'un joueur qui publie des clips de jeux vidéo sur TikTok, YouTube Shorts et Instagram.
 Tu connais les codes de ces plateformes : accroche dans les 2 premières secondes, textes courts et percutants, hashtags pertinents.
@@ -126,7 +126,8 @@ export async function direct({ project, data, catalog, instruction }) {
   }));
   const current = {
     format: data.format, fit: data.fit, fps: data.fps, transition: data.transition, transitionDuration: data.transitionDuration,
-    segments: data.segments.map((s) => ({ clipId: s.clipId, start: s.start, end: s.end })),
+    grade: data.grade,
+    segments: data.segments.map((s) => ({ clipId: s.clipId, start: s.start, end: s.end, speed: s.speed, impact: s.impact })),
     texts: data.texts.filter((t) => !t.auto).map(({ text, start, end, position, size }) => ({ text, start, end, position, size })),
   };
   const out = await askJson({
@@ -135,7 +136,8 @@ Tu modifies un montage décrit en JSON. Règles :
 - segments : extraits des clips fournis UNIQUEMENT (ce sont les vidéos que l'utilisateur a sélectionnées pour ce montage ; n'invente jamais d'autre clipId), 0 ≤ start < end ≤ durée du clip, dans l'ordre de lecture ; privilégie les moments forts fournis.
 - Sauf si la demande dit le contraire, utilise chacun des clips fournis au moins une fois.
 - textes : start/end en secondes sur la timeline du montage ; position top|center|bottom ; taille S|M|L.
-- format ${Object.keys(CANVAS).join('|')} ; fit ${FITS.join('|')} (fight = jeux de combat) ; transition ${TRANSITIONS.join('|')}.
+- segments.speed : ${SPEEDS.join('|')} (0.5 = ralenti, idéal pour rejouer un moment fort juste après lui) ; segments.impact : seconde du clip où placer un effet d'impact (zoom + tremblement + flash, sur un kill, un but, un KO), ou null.
+- format ${Object.keys(CANVAS).join('|')} ; fit ${FITS.join('|')} (follow = cadre 9:16 qui suit l'action, tous jeux ; stack = vue entière + zoom au centre, FPS/sport ; fight = jeux de combat) ; transition ${TRANSITIONS.join('|')} ; grade (étalonnage) ${Object.keys(GRADES).join('|')}.
 - Ne garde que ce que la demande implique de changer ; explique en 1-2 phrases ce que tu as fait.`,
     prompt: [
       `Montage « ${project.name} » actuel :`, JSON.stringify(current),
@@ -145,7 +147,7 @@ Tu modifies un montage décrit en JSON. Règles :
     effort: 'medium',
     schema: {
       type: 'object', additionalProperties: false,
-      required: ['explanation', 'format', 'fit', 'fps', 'transition', 'transitionDuration', 'segments', 'texts'],
+      required: ['explanation', 'format', 'fit', 'fps', 'transition', 'transitionDuration', 'grade', 'segments', 'texts'],
       properties: {
         explanation: { type: 'string' },
         format: { type: 'string', enum: Object.keys(CANVAS) },
@@ -153,11 +155,15 @@ Tu modifies un montage décrit en JSON. Règles :
         fps: { type: 'integer', enum: [30, 60] },
         transition: { type: 'string', enum: TRANSITIONS },
         transitionDuration: { type: 'number' },
+        grade: { type: 'string', enum: Object.keys(GRADES) },
         segments: {
           type: 'array',
           items: {
-            type: 'object', additionalProperties: false, required: ['clipId', 'start', 'end'],
-            properties: { clipId: { type: 'integer' }, start: { type: 'number' }, end: { type: 'number' } },
+            type: 'object', additionalProperties: false, required: ['clipId', 'start', 'end', 'speed', 'impact'],
+            properties: {
+              clipId: { type: 'integer' }, start: { type: 'number' }, end: { type: 'number' },
+              speed: { type: 'number', enum: SPEEDS }, impact: { type: ['number', 'null'] },
+            },
           },
         },
         texts: {
@@ -178,12 +184,16 @@ Tu modifies un montage décrit en JSON. Règles :
   const segments = (out.segments || []).filter((s) => known.has(s.clipId)).map((s) => {
     const clip = known.get(s.clipId);
     const start = Math.max(0, Math.min(Number(s.start) || 0, clip.duration - 0.5));
-    return { clipId: s.clipId, start, end: Math.min(clip.duration, Math.max(Number(s.end) || clip.duration, start + 0.5)) };
+    return {
+      clipId: s.clipId, start, end: Math.min(clip.duration, Math.max(Number(s.end) || clip.duration, start + 0.5)),
+      speed: s.speed, impact: s.impact,
+    };
   });
   if (!segments.length) throw new Error('L’IA n’a proposé aucun extrait valable, reformule ta demande');
   const next = sanitizeProjectData({
     ...data,
     format: out.format, fit: out.fit, fps: out.fps, transition: out.transition, transitionDuration: out.transitionDuration,
+    grade: out.grade ?? data.grade,
     segments,
     // subtitles are kept as they are; regenerate them if the clips changed
     texts: [...data.texts.filter((t) => t.auto), ...(out.texts || []).map((t) => ({ ...t, box: true }))],

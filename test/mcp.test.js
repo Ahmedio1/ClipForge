@@ -62,7 +62,7 @@ test('exposes the editing tools with instructions', async () => {
   }
   assert.match(client.getInstructions(), /fight/);
   const edit = tools.find((t) => t.name === 'edit_montage');
-  assert.deepEqual(edit.inputSchema.properties.fit.enum, ['blur', 'crop', 'bars', 'fight']);
+  assert.deepEqual(edit.inputSchema.properties.fit.enum, ['blur', 'crop', 'bars', 'follow', 'stack', 'fight']);
 });
 
 test('an AI can browse, look at and assemble a fight short, then check the render', { timeout: 300_000 }, async () => {

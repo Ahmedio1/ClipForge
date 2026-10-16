@@ -4,8 +4,11 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 
-const FORMATS = ['original', 'vertical-blur', 'vertical-crop', 'vertical-fight'];
-const FITS = ['blur', 'crop', 'bars', 'fight'];
+// kept in sync with server/montage.js (the stdio bridge doesn't load the editor's modules)
+const FORMATS = ['original', 'vertical-blur', 'vertical-crop', 'vertical-follow', 'vertical-stack', 'vertical-fight'];
+const FITS = ['blur', 'crop', 'bars', 'follow', 'stack', 'fight'];
+const GRADES = ['none', 'vivid', 'punchy', 'cinema', 'retro', 'bw'];
+const SPEEDS = [0.25, 0.5, 0.75, 1, 1.5, 2];
 const TRANSITIONS = ['none', 'fade', 'fadeblack', 'dissolve', 'wipeleft', 'slideleft', 'circleopen', 'zoomin'];
 
 const text = (value) => ({ content: [{ type: 'text', text: typeof value === 'string' ? value : JSON.stringify(value, null, 1) }] });
@@ -57,9 +60,9 @@ export function createMcpServer(baseUrl) {
   });
 
   const server = new McpServer({ name: 'clipforge', version: '1.0.0' }, {
-    instructions: `ClipForge is the user's local library of game clips (mostly fighting games such as TEKKEN 8, recorded with Xbox Game Bar) and their video editor for TikTok / YouTube Shorts.
+    instructions: `ClipForge is the user's local library of game clips (any game: fighting games such as TEKKEN 8, shooters, sports, racing…, recorded with Xbox Game Bar) and their video editor for TikTok / YouTube Shorts.
 Typical flow: list_clips → get_clip_highlights / view_clip to see the action → create_montage with the chosen clips → edit_montage (cuts, order, texts, style) → render_montage → view_export to check the result → publish_youtube if the user asks.
-For vertical shorts of fighting games, prefer format "vertical" with fit "fight" (HUD band + camera that follows the fighters). Times are in seconds. Answer the user in their language (usually French).`,
+For vertical shorts pick the fit by genre: "fight" for fighting games (HUD band + camera that follows the fighters), "stack" for shooters/sports (full view + centre zoom), "follow" for anything else (a 9:16 window that tracks the action). Make it punchy: an impact (segment.impact = clip second of the hit/kill/goal), a slow-motion replay (duplicate the moment with speed 0.5), a colour grade, beat-synced cuts when there is music. Times are in seconds. Answer the user in their language (usually French).`,
   });
 
   // Errors from the HTTP API become readable tool errors instead of protocol failures.
@@ -171,12 +174,20 @@ For vertical shorts of fighting games, prefer format "vertical" with fit "fight"
       projectId: z.number().int(),
       name: z.string().optional(),
       format: z.enum(['vertical', 'landscape']).optional(),
-      fit: z.enum(FITS).optional().describe('fight = fighting games: HUD band + camera following the characters'),
+      fit: z.enum(FITS).optional().describe('follow = 9:16 window tracking the action (any game); stack = full view on top + centre zoom (FPS, sports); fight = fighting games: HUD band + camera following the characters'),
+      grade: z.enum(GRADES).optional().describe('Colour look of the whole montage'),
+      progressBar: z.boolean().optional().describe('Shorts-style progress bar at the bottom'),
+      beatSync: z.boolean().optional().describe('Snap the cuts to the music beat (needs music)'),
+      duck: z.boolean().optional().describe('Lower the music while the game is loud'),
       fps: z.union([z.literal(30), z.literal(60)]).optional(),
       transition: z.enum(TRANSITIONS).optional(),
       transitionDuration: z.number().min(0.1).max(2).optional(),
       fadeInOut: z.boolean().optional(),
-      segments: z.array(z.object({ clipId: z.number().int(), start: z.number().min(0), end: z.number().min(0) })).optional(),
+      segments: z.array(z.object({
+        clipId: z.number().int(), start: z.number().min(0), end: z.number().min(0),
+        speed: z.union(SPEEDS.map((v) => z.literal(v))).optional().describe('0.5 = slow motion'),
+        impact: z.number().min(0).nullable().optional().describe('Clip second of a zoom punch + shake + flash'),
+      })).optional(),
       texts: z.array(z.object({
         text: z.string(), start: z.number().min(0), end: z.number().min(0).describe('≥ 9999 = until the end'),
         position: z.enum(['top', 'center', 'bottom']).optional(), size: z.enum(['S', 'M', 'L']).optional(),
@@ -225,7 +236,7 @@ For vertical shorts of fighting games, prefer format "vertical" with fit "fight"
 
   register('export_clip', {
     title: 'Exporter un extrait',
-    description: 'Exports one clip extract alone. Formats: original, vertical-blur, vertical-crop, vertical-fight (fighting games).',
+    description: 'Exports one clip extract alone. Formats: original, vertical-blur, vertical-crop, vertical-follow (tracks the action, any game), vertical-stack (full view + centre zoom, shooters), vertical-fight (fighting games).',
     inputSchema: {
       clipId: z.number().int(), start: z.number().min(0), end: z.number().min(0), format: z.enum(FORMATS),
       title: z.string().optional(), waitSeconds: z.number().int().min(0).max(900).optional(),

@@ -108,3 +108,62 @@ export function cameraFilter(cam) {
       `:'clip((${piecewise(cam.keyframes, 'cy')})*ih-${BOX_H / 2},0,ih-${BOX_H})'`,
   ].join(',');
 }
+
+// ---- Generic "follow" reframing (any game) -----------------------------------------------
+
+/**
+ * Where the action is in one second of video, from frame differences: `frames` are grey
+ * images (Uint8Array, w×h) a fraction of a second apart. Top and bottom bands (HUD, kill feed,
+ * minimap labels) are ignored, and a soft centre prior keeps whole-screen camera pans centred.
+ * Returns the horizontal centre of motion (0..1), or null when nothing moves.
+ */
+export function motionCentre(frames, w, h, { band = 0.12, noise = 14 } = {}) {
+  if (frames.length < 2) return null;
+  const cols = new Float64Array(w);
+  const y0 = Math.floor(h * band);
+  const y1 = Math.ceil(h * (1 - band));
+  for (let f = 1; f < frames.length; f++) {
+    const a = frames[f - 1];
+    const b = frames[f];
+    for (let y = y0; y < y1; y++) {
+      for (let x = 0; x < w; x++) {
+        const d = Math.abs(a[y * w + x] - b[y * w + x]);
+        if (d > noise) cols[x] += d;
+      }
+    }
+  }
+  let sum = 0;
+  let weighted = 0;
+  for (let x = 0; x < w; x++) {
+    const u = (x + 0.5) / w;
+    const v = cols[x] * Math.exp(-(((u - 0.5) / 0.38) ** 2));
+    sum += v;
+    weighted += v * u;
+  }
+  // less than ~0.5 % of the analysed pixels changing noticeably: a still shot
+  if (sum < (y1 - y0) * w * (frames.length - 1) * noise * 0.005) return null;
+  return weighted / sum;
+}
+
+/**
+ * Plans a horizontal 9:16 window over a segment from per-second motion centres
+ * ([{ sec, cx }]): gaps filled, smoothed, and held still unless the action really moves,
+ * so the frame doesn't wobble. Keyframe times are relative to the segment start.
+ */
+export function planFollow(samples, { start, end, deadZone = 0.05 }) {
+  const inSeg = samples.filter((s) => s.sec >= Math.floor(start) && s.sec <= Math.ceil(end));
+  const smoothed = windowed(windowed(fillGaps(inSeg.map((s) => s.cx), 0.5), mean), mean);
+  let held = smoothed[0] ?? 0.5;
+  const keyframes = inSeg.map((s, i) => {
+    if (Math.abs(smoothed[i] - held) > deadZone) held = smoothed[i];
+    return { t: Math.max(0, s.sec + 0.5 - start), cx: Number(held.toFixed(3)) };
+  });
+  if (!keyframes.length) keyframes.push({ t: 0, cx: 0.5 });
+  return { keyframes, tracked: inSeg.filter((s) => s.cx != null).length };
+}
+
+/** Scales the source to the canvas height and crops a canvas-wide window that follows the action. */
+export function followFilter(plan, W, H) {
+  const cx = piecewise(plan?.keyframes || [{ t: 0, cx: 0.5 }], 'cx');
+  return `scale=-2:${H},crop=${W}:${H}:'clip((${cx})*iw-${W / 2},0,iw-${W})':0`;
+}

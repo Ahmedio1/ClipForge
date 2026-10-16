@@ -390,6 +390,27 @@ input[type=range] { accent-color: var(--accent); width: 100%; }
   linear-gradient(rgba(140,255,90,.35) 0 0) top 13px left 0 / 100% 14px no-repeat; }
 .canvas[data-fit="fight"] .canvas-bg { display: block; }
 
+/* new layouts, looks and effects in the montage preview */
+.seg-control.grid3 { display: grid; grid-template-columns: repeat(3, 1fr); }
+.seg-control.grid3 button { border-left: 0; border-top: 1px solid var(--line); }
+.seg-control.grid3 button:nth-child(-n+3) { border-top: 0; }
+.seg-control.grid3 button:not(:nth-child(3n+1)) { border-left: 1px solid var(--line); }
+.canvas[data-fit="follow"] video { object-fit: cover; }
+.canvas[data-fit="stack"] video { object-fit: contain; object-position: top; height: 31.7%; }
+.canvas-zoom { position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: 68.3%; display: none; }
+.canvas[data-fit="stack"] .canvas-zoom { display: block; }
+.canvas[data-grade="vivid"] :is(video, .canvas-zoom) { filter: saturate(1.3) contrast(1.06); }
+.canvas[data-grade="punchy"] :is(video, .canvas-zoom) { filter: saturate(1.22) contrast(1.18); }
+.canvas[data-grade="cinema"] :is(video, .canvas-zoom) { filter: contrast(1.1) saturate(.9) sepia(.12) hue-rotate(-8deg); }
+.canvas[data-grade="retro"] :is(video, .canvas-zoom) { filter: sepia(.45) contrast(1.05) saturate(.85); }
+.canvas[data-grade="bw"] :is(video, .canvas-zoom) { filter: grayscale(1) contrast(1.15); }
+.canvas video, .canvas-zoom { transition: transform 60ms linear; }
+.canvas.impact video, .canvas.impact .canvas-zoom { transform: scale(1.14); filter: brightness(1.35); }
+.canvas-progress { position: absolute; left: 0; bottom: 0; height: .7%; min-height: 3px; width: 0; background: #ffd23f; display: none; }
+.canvas.with-progress .canvas-progress { display: block; }
+.seq-item { position: relative; }
+.seq-item .seq-fx { position: absolute; top: 4px; right: 4px; font-size: 11px; background: rgba(0,0,0,.7); border-radius: 4px; padding: 1px 4px; }
+
 /* ================================================================ cloud sources & AI */
 .page-intro { max-width: 760px; margin: -6px 0 18px; }
 .section-title { font-size: 16px; margin: 28px 0 12px; }

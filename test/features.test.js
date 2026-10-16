@@ -216,6 +216,59 @@ test('fight layout: vertical export with tracked camera, normalised loudness', {
   assert.ok(Math.abs(lufs - -14) < 2, `loudness ${lufs} LUFS`);
 });
 
+async function waitExport(id) {
+  for (let i = 0; i < 1000; i++) {
+    const e = (await api('/api/exports')).body.find((x) => x.id === id);
+    if (e.status === 'failed') throw new Error(e.error);
+    if (e.status === 'done') return e;
+    await sleep(300);
+  }
+  throw new Error('export timeout');
+}
+
+const probe = (file) => JSON.parse(execFileSync(ffprobeStatic.path, [
+  '-v', 'error', '-print_format', 'json', '-show_streams', '-show_format', file,
+], { encoding: 'utf8' }));
+
+test('any game: "follow" and "stack" single-clip exports', { timeout: 300_000 }, async () => {
+  const clip = await clipByName('21-04-33');
+  for (const format of ['vertical-follow', 'vertical-stack']) {
+    const { body: job } = await post(`/api/clips/${clip.id}/export`, { start: 1, end: 5, format });
+    const e = await waitExport(job.id);
+    const info = probe(e.out_path);
+    const v = info.streams.find((x) => x.codec_type === 'video');
+    assert.deepEqual([v.width, v.height], [1080, 1920], format);
+    assert.ok(Math.abs(Number(info.format.duration) - 4) < 0.15, `${format} ${info.format.duration}`);
+  }
+});
+
+test('punchy montage: slow motion, impact, look, progress bar, beat-synced music with ducking', { timeout: 300_000 }, async () => {
+  // a 120 BPM kick track
+  const music = path.join(TMP, 'kick.wav');
+  ff('-f', 'lavfi', '-i', "aevalsrc='0.8*sin(2*PI*60*t)*exp(-30*mod(t,0.5))':s=44100:d=6", music);
+  const up = await api('/api/music', { method: 'POST', body: fs.readFileSync(music), headers: { 'x-filename': 'kick.wav' } });
+  assert.equal(up.status, 200);
+
+  const clip = await clipByName('21-04-33');
+  const { body: p } = await post('/api/projects', {
+    data: {
+      format: 'vertical', fit: 'follow', transition: 'none', grade: 'punchy', progressBar: true,
+      beatSync: true, duck: true, music: { file: up.body.file, volume: 0.6 },
+      segments: [
+        { clipId: clip.id, start: 3, end: 6.3, impact: 5.2 },
+        { clipId: clip.id, start: 4.5, end: 5.8, speed: 0.5, impact: 5.2 },
+      ],
+    },
+  });
+  assert.equal(p.data.segments[1].speed, 0.5);
+  const { body: job } = await post(`/api/projects/${p.id}/render`);
+  const e = await waitExport(job.id);
+  const info = probe(e.out_path);
+  // the 3.3 s cut moves to the nearest beat (3.5 s), then 1.3 s of clip at half speed
+  assert.ok(Math.abs(Number(info.format.duration) - (3.5 + 2.6)) < 0.15, `duration ${info.format.duration}`);
+  assert.ok(info.streams.some((x) => x.codec_type === 'audio'));
+});
+
 test('cross-site requests are refused', async () => {
   assert.equal((await post('/api/scan', {}, { origin: 'http://evil.example' })).status, 403);
   assert.equal((await post('/api/scan', {}, { origin: BASE })).status, 200);

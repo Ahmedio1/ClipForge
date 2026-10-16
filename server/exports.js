@@ -4,8 +4,9 @@ import { DATA_DIR, EXPORTS_DIR, MUSIC_DIR } from './config.js';
 import { db } from './db.js';
 import { exportVideo, probeDuration, runFfmpeg } from './media.js';
 import { buildMontageArgs, planTimeline, sanitizeProjectData } from './montage.js';
-import { planCamera } from './camera.js';
-import { trackClip } from './tracking.js';
+import { planCamera, planFollow } from './camera.js';
+import { motionTrack, trackClip } from './tracking.js';
+import { loopBeats, musicBeats } from './beats.js';
 
 const setStatus = db.prepare('UPDATE exports SET status = ?, error = ? WHERE id = ?');
 const setProgress = db.prepare('UPDATE exports SET progress = ? WHERE id = ?');
@@ -14,7 +15,11 @@ const insertExport = db.prepare('INSERT INTO exports (clip_id, project_id, name,
 
 const FORMAT_LABEL = {
   original: 'original', 'vertical-blur': '9:16 flou', 'vertical-crop': '9:16 recadré', 'vertical-fight': '9:16 combat',
+  'vertical-follow': '9:16 suivi auto', 'vertical-stack': '9:16 jeu + zoom',
 };
+/** Single-clip formats rendered as a one-clip montage, which is where these layouts live. */
+const MONTAGE_FORMATS = { 'vertical-fight': 'fight', 'vertical-follow': 'follow', 'vertical-stack': 'stack' };
+export const LAYOUT_FORMATS = Object.keys(MONTAGE_FORMATS);
 
 const queue = [];
 let busy = false;
@@ -33,10 +38,9 @@ function enqueue({ clipId = null, projectId = null, name, options, label, render
 
 export function enqueueExport(clip, options) {
   const label = options.title?.trim() || clip.title || clip.game;
-  if (options.format === 'vertical-fight') {
-    // rendered as a one-clip montage, which is where the fight layout lives
+  if (MONTAGE_FORMATS[options.format]) {
     const data = sanitizeProjectData({
-      format: 'vertical', fit: 'fight', fps: 60, transition: 'none', fadeInOut: false,
+      format: 'vertical', fit: MONTAGE_FORMATS[options.format], fps: 60, transition: 'none', fadeInOut: false,
       gameVolume: options.mute ? 0 : 1, segments: [{ clipId: clip.id, start: options.start, end: options.end }],
     });
     return enqueue({
@@ -69,13 +73,27 @@ export function enqueueMontage(project, data, clipsById) {
   });
 }
 
-/** Character tracking for the fight layout, reported as the first 30 % of progress. */
+/**
+ * Tracking for the layouts that follow the action (characters for "fight", motion for
+ * "follow"), reported as the first part of the progress bar.
+ */
 async function cameraPlans(data, clipsById, onProgress) {
   const cameras = new Map();
-  if (data.fit !== 'fight' || data.format !== 'vertical') return { cameras, weight: 0 };
+  const follows = new Map();
+  const tracked = data.format === 'vertical' && ['fight', 'follow'].includes(data.fit);
+  if (!tracked) return { cameras, follows, weight: 0 };
+  const weight = data.fit === 'fight' ? 0.3 : 0.1;
   const { segments } = planTimeline(data, clipsById);
   for (const [i, seg] of segments.entries()) {
-    onProgress((i / segments.length) * 0.3);
+    onProgress((i / segments.length) * weight);
+    if (data.fit === 'follow') {
+      try {
+        follows.set(seg.id, planFollow(await motionTrack(seg.clip, seg.start, seg.end), { start: seg.start, end: seg.end }));
+      } catch (err) {
+        console.warn(`[follow] analyse du mouvement impossible, cadrage centré : ${err.message}`);
+      }
+      continue;
+    }
     try {
       const samples = await trackClip(seg.clip, seg.start, seg.end);
       cameras.set(seg.id, planCamera(samples, {
@@ -85,7 +103,7 @@ async function cameraPlans(data, clipsById, onProgress) {
       console.warn(`[camera] suivi impossible, cadrage centré : ${err.message}`);
     }
   }
-  return { cameras, weight: 0.3 };
+  return { cameras, follows, weight };
 }
 
 function renderMontage(data, clipsById) {
@@ -99,9 +117,20 @@ function renderMontage(data, clipsById) {
       const musicPath = data.music ? path.join(MUSIC_DIR, path.basename(data.music.file)) : null;
       if (musicPath && !fs.existsSync(musicPath)) throw new Error(`Musique introuvable : ${data.music.file}`);
       const musicDuration = musicPath ? await probeDuration(musicPath) : null;
-      const { cameras, weight } = await cameraPlans(data, clipsById, onProgress);
+      const { cameras, follows, weight } = await cameraPlans(data, clipsById, onProgress);
+      let beats;
+      if (data.beatSync && musicPath && musicDuration) {
+        try {
+          const { beats: one } = await musicBeats(musicPath);
+          const { segments } = planTimeline(data, clipsById);
+          const longest = segments.reduce((t, s) => t + (s.clip.duration - s.start) / s.speed, 0);
+          beats = loopBeats(one, musicDuration, longest);
+        } catch (err) {
+          console.warn(`[beats] rythme introuvable, coupes inchangées : ${err.message}`);
+        }
+      }
       ({ passes, textFiles, tempFiles } = buildMontageArgs(
-        data, clipsById, { output, musicPath, musicDuration, textDir, cameras }));
+        data, clipsById, { output, musicPath, musicDuration, textDir, cameras, follows, beats }));
       for (const [file, text] of Object.entries(textFiles)) fs.writeFileSync(file, text);
       let done = weight;
       for (const pass of passes) {

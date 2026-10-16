@@ -123,6 +123,16 @@
               <span class="fmt-shape tall fight"></span>
               <b>Vertical combat</b><small>Tekken, SF6… (suit les persos)</small>
             </label>
+            <label class="format">
+              <input type="radio" name="format" value="vertical-follow">
+              <span class="fmt-shape tall"></span>
+              <b>Suivi auto</b><small>Tous jeux : le cadre suit l’action</small>
+            </label>
+            <label class="format">
+              <input type="radio" name="format" value="vertical-stack">
+              <span class="fmt-shape tall stack"></span>
+              <b>Jeu + zoom</b><small>FPS : vue entière + zoom viseur</small>
+            </label>
           </div>
         </div>
 
@@ -162,7 +172,9 @@
           <div id="mt-canvas" class="canvas">
             <div id="mt-bg" class="canvas-bg"></div>
             <video id="mt-video" preload="auto" playsinline></video>
+            <canvas id="mt-zoom" class="canvas-zoom" width="540" height="656"></canvas>
             <div id="mt-texts" class="canvas-texts"></div>
+            <div id="mt-progress-bar" class="canvas-progress"></div>
           </div>
           <audio id="mt-audio" preload="auto"></audio>
         </div>
@@ -200,6 +212,24 @@
               <button id="mt-seg-in" class="btn small">[ Début = position</button>
               <button id="mt-seg-out" class="btn small">Fin = position ]</button>
             </div>
+            <div class="field">
+              <span>Vitesse</span>
+              <div id="mt-seg-speed" class="seg-control">
+                <button data-speed="0.25" title="Super ralenti">¼×</button>
+                <button data-speed="0.5" title="Ralenti">½×</button>
+                <button data-speed="1">1×</button>
+                <button data-speed="1.5">1,5×</button>
+                <button data-speed="2">2×</button>
+              </div>
+            </div>
+            <div class="field">
+              <span>💥 Impact <small id="mt-seg-impact-val" class="muted"></small></span>
+              <div class="row2">
+                <button id="mt-seg-impact" class="btn small" title="Zoom, tremblement et flash à cet instant (un coup, un kill, un but)">💥 Impact = position</button>
+                <button id="mt-seg-impact-clear" class="btn small">Retirer</button>
+              </div>
+            </div>
+            <button id="mt-seg-replay" class="btn small block" title="Rejoue le moment fort au ralenti juste après ce clip">🔁 Ajouter un replay au ralenti</button>
             <div class="row2">
               <button id="mt-seg-dup" class="btn small">Dupliquer</button>
               <button id="mt-seg-del" class="btn small danger">Retirer</button>
@@ -255,10 +285,12 @@
           </div>
           <div class="field">
             <span>Remplissage</span>
-            <div class="seg-control" data-bind="fit">
+            <div class="seg-control grid3" data-bind="fit">
               <button data-value="blur">Fond flou</button>
               <button data-value="crop">Recadrer</button>
               <button data-value="bars">Bandes noires</button>
+              <button data-value="follow" title="Tous jeux : un cadre 9:16 qui suit l’action (mouvement à l’écran)">Suivi auto</button>
+              <button data-value="stack" title="FPS, sport, course : la vue entière en haut, le centre zoomé en dessous">Jeu + zoom</button>
               <button data-value="fight" title="Jeux de combat : barres de vie en bandeau, zoom qui suit les persos">Combat</button>
             </div>
           </div>
@@ -279,6 +311,18 @@
             <span>Durée de transition : <b id="mt-td-val"></b></span>
             <input id="mt-td" type="range" min="0.2" max="1.5" step="0.1">
           </label>
+          <label class="field">
+            <span>Étalonnage (couleurs)</span>
+            <select id="mt-grade" class="select">
+              <option value="none">Naturel</option>
+              <option value="vivid">Vif</option>
+              <option value="punchy">Punchy</option>
+              <option value="cinema">Ciné</option>
+              <option value="retro">Rétro</option>
+              <option value="bw">Noir et blanc</option>
+            </select>
+          </label>
+          <label class="check"><input id="mt-progress" type="checkbox"> Barre de progression en bas (Shorts, TikTok)</label>
           <div class="field">
             <span>Images par seconde</span>
             <div class="seg-control" data-bind="fps">
@@ -303,6 +347,9 @@
             <span>Volume de la musique : <b id="mt-mv-val"></b></span>
             <input id="mt-mv" type="range" min="0" max="1.5" step="0.05">
           </label>
+          <label class="check"><input id="mt-beat" type="checkbox"> 🥁 Couper sur le rythme de la musique</label>
+          <label class="check"><input id="mt-duck" type="checkbox"> Baisser la musique quand le jeu est fort</label>
+          <p class="muted small">Le calage sur le rythme se fait au rendu : chaque coupe glisse sur le temps le plus proche.</p>
           <p class="muted small">La musique boucle si elle est plus courte que le montage. Utilise des sons libres de droits pour éviter les blocages Copyright.</p>
         </div>
       </aside>

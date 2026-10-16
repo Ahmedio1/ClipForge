@@ -4,7 +4,7 @@ import { DATA_DIR } from './config.js';
 import { db } from './db.js';
 import { runBuffer } from './highlights.js';
 import { mutex } from './jobs.js';
-import { fightersBox } from './camera.js';
+import { fightersBox, motionCentre } from './camera.js';
 
 const MODEL = 'Xenova/yolos-tiny';
 const MODELS_DIR = process.env.CLIPFORGE_MODELS || path.join(DATA_DIR, 'models');
@@ -16,6 +16,12 @@ db.exec(`
     clip_id INTEGER NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
     sec     INTEGER NOT NULL,
     box     TEXT,            -- normalized [x0, y0, x1, y1] of all characters, or null
+    PRIMARY KEY (clip_id, sec)
+  );
+  CREATE TABLE IF NOT EXISTS clip_motion (
+    clip_id INTEGER NOT NULL REFERENCES clips(id) ON DELETE CASCADE,
+    sec     INTEGER NOT NULL,
+    cx      REAL,            -- horizontal centre of the action (0..1), or null when still
     PRIMARY KEY (clip_id, sec)
   );
 `);
@@ -74,5 +80,44 @@ export function trackClip(clip, start, end, onStatus) {
       }
     }
     return [...cached.entries()].sort((a, b) => a[0] - b[0]).map(([sec, box]) => ({ sec, box }));
+  });
+}
+
+const MOTION_W = 192;
+const MOTION_H = 108;
+const MOTION_FPS = 4;
+
+/** Where the action is, once per second over [start, end] (frame differences, no AI model needed). */
+export function motionTrack(clip, start, end) {
+  return exclusive(async () => {
+    const first = Math.max(0, Math.floor(start));
+    const last = Math.min(Math.floor(clip.duration), Math.ceil(end));
+    const cached = new Map(db.prepare('SELECT sec, cx FROM clip_motion WHERE clip_id = ? AND sec BETWEEN ? AND ?')
+      .all(clip.id, first, last).map((r) => [r.sec, r.cx]));
+    const missing = [];
+    for (let s = first; s <= last; s++) if (!cached.has(s)) missing.push(s);
+
+    if (missing.length) {
+      const from = missing[0];
+      const to = missing.at(-1);
+      const raw = await runBuffer([
+        '-v', 'error', '-ss', String(from), '-i', clip.path, '-t', String(to - from + 1), '-an',
+        '-vf', `fps=${MOTION_FPS},scale=${MOTION_W}:${MOTION_H}`, '-f', 'rawvideo', '-pix_fmt', 'gray', '-',
+      ]);
+      const size = MOTION_W * MOTION_H;
+      const frames = [];
+      for (let i = 0; i + size <= raw.length; i += size) frames.push(raw.subarray(i, i + size));
+      const save = db.prepare('INSERT OR REPLACE INTO clip_motion (clip_id, sec, cx) VALUES (?, ?, ?)');
+      for (let sec = from; sec <= to; sec++) {
+        const i = (sec - from) * MOTION_FPS;
+        // this second's frames plus the next one, so every second has MOTION_FPS differences
+        const group = frames.slice(i, i + MOTION_FPS + 1);
+        if (!group.length || cached.has(sec)) continue;
+        const cx = motionCentre(group, MOTION_W, MOTION_H);
+        cached.set(sec, cx);
+        save.run(clip.id, sec, cx);
+      }
+    }
+    return [...cached.entries()].sort((a, b) => a[0] - b[0]).map(([sec, cx]) => ({ sec, cx }));
   });
 }

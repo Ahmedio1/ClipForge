@@ -4,10 +4,10 @@ import { pipeline } from 'node:stream/promises';
 import express from 'express';
 import { getConfig, MUSIC_DIR, ROOT, updateConfig } from './config.js';
 import { db } from './db.js';
-import { enqueueExport, enqueueMontage } from './exports.js';
+import { enqueueExport, enqueueMontage, LAYOUT_FORMATS } from './exports.js';
 import { FORMATS, probeDuration } from './media.js';
 import {
-  applyTemplate, BUILTIN_TEMPLATES, planTimeline, sanitizeProjectData, templateFromProject,
+  applyTemplate, BUILTIN_TEMPLATES, planTimeline, sanitizeProjectData, shapeBestOf, templateFromProject,
 } from './montage.js';
 import { analyzeClip } from './highlights.js';
 import { getJob, startJob } from './jobs.js';
@@ -169,7 +169,7 @@ app.post('/api/clips/:id/export', (req, res) => {
   if (!clip) return notFound(res);
   const start = Math.max(0, Number(req.body.start) || 0);
   const end = Math.min(clip.duration, Number(req.body.end) || clip.duration);
-  const format = [...FORMATS, 'vertical-fight'].includes(req.body.format) ? req.body.format : 'original';
+  const format = [...FORMATS, ...LAYOUT_FORMATS].includes(req.body.format) ? req.body.format : 'original';
   if (end - start < 0.3) return res.status(400).json({ error: 'Sélection trop courte' });
   const id = enqueueExport(clip, {
     start, end, format, mute: !!req.body.mute, title: req.body.title || null,
@@ -440,6 +440,11 @@ app.get('/api/clips/:id/highlights', async (req, res) => {
   }
 });
 
+const bestOfOptions = (body) => ({
+  order: body.order === 'crescendo' ? 'crescendo' : 'chrono',
+  replay: !!body.replay,
+});
+
 // Best-of: the strongest moment of each clip, in recording order, capped at maxDuration.
 app.post('/api/projects/auto', (req, res) => {
   const ids = (req.body.clipIds || []).map(Number);
@@ -450,8 +455,9 @@ app.post('/api/projects/auto', (req, res) => {
   const maxDuration = Math.max(5, Number(req.body.maxDuration) || 60);
 
   const useAi = !!req.body.ai && ai.isConfigured();
+  const shape = bestOfOptions(req.body);
   const job = startJob('auto-montage', async (update) => {
-    if (useAi) return { projectId: await aiBestOf(clips, maxDuration, req.body.templateId, update) };
+    if (useAi) return { projectId: await aiBestOf(clips, maxDuration, req.body.templateId, update, shape) };
     const picks = [];
     for (const [i, clip] of clips.entries()) {
       update({ progress: i / clips.length, message: `Analyse de ${clip.title || clip.game} (${i + 1}/${clips.length})…` });
@@ -459,7 +465,9 @@ app.post('/api/projects/auto', (req, res) => {
       const best = highlights.slice(0, perClip);
       // nothing stood out: keep the middle of the clip
       if (!best.length) best.push({ start: Math.max(0, clip.duration / 2 - 3), end: Math.min(clip.duration, clip.duration / 2 + 3), score: 0 });
-      for (const h of best.sort((a, b) => a.start - b.start)) picks.push({ clipId: clip.id, start: h.start, end: h.end, score: h.score });
+      for (const h of best.sort((a, b) => a.start - b.start)) {
+        picks.push({ clipId: clip.id, start: h.start, end: h.end, score: h.score, time: h.time });
+      }
     }
     // over budget: drop the weakest moments, keep the order
     let total = picks.reduce((t, p) => t + p.end - p.start, 0);
@@ -468,7 +476,7 @@ app.post('/api/projects/auto', (req, res) => {
       picks.splice(picks.indexOf(weakest), 1);
       total -= weakest.end - weakest.start;
     }
-    let data = sanitizeProjectData({ segments: picks, pool: clips.map((c) => c.id) });
+    let data = sanitizeProjectData({ segments: shapeBestOf(picks, shape), pool: clips.map((c) => c.id) });
     const tpl = req.body.templateId && db.prepare('SELECT * FROM templates WHERE id = ?').get(req.body.templateId);
     if (tpl) data = applyTemplate(data, JSON.parse(tpl.data));
     const name = `Best-of auto du ${new Date().toLocaleDateString('fr-FR')}`;
@@ -479,7 +487,7 @@ app.post('/api/projects/auto', (req, res) => {
 });
 
 /** Best-of where the AI looks at the loudest moments of each clip and keeps the best ones. */
-async function aiBestOf(clips, maxDuration, templateId, update) {
+async function aiBestOf(clips, maxDuration, templateId, update, shape) {
   const candidates = [];
   for (const [i, clip] of clips.entries()) {
     update({ progress: (i / clips.length) * 0.5, message: `Analyse de ${clip.title || clip.game} (${i + 1}/${clips.length})…` });
@@ -499,9 +507,11 @@ async function aiBestOf(clips, maxDuration, templateId, update) {
     total += c.end - c.start;
   }
   if (!chosen.length) throw new Error('L’IA n’a retenu aucun moment');
+  // the AI's preference becomes the score: first = best
+  chosen.forEach((c, i) => { c.rank = chosen.length - i; });
   chosen.sort((a, b) => a.clip.recorded_at.localeCompare(b.clip.recorded_at) || a.start - b.start);
   let data = sanitizeProjectData({
-    segments: chosen.map((c) => ({ clipId: c.clip.id, start: c.start, end: c.end })),
+    segments: shapeBestOf(chosen.map((c) => ({ clipId: c.clip.id, start: c.start, end: c.end, time: c.time, score: c.rank })), shape),
     pool: clips.map((c) => c.id),
   });
   const tpl = templateId && db.prepare('SELECT * FROM templates WHERE id = ?').get(templateId);

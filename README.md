@@ -45,15 +45,24 @@ Chromium de Playwright s'il est présent (`CHROME_PATH` pour en indiquer un autr
 **Montages**
 - Coche des clips (✓ ou Maj + clic) → « Créer un montage », ou « Ajouter à un montage » depuis l'éditeur.
 - Séquence réordonnable par glisser-déposer, découpe de chaque clip, duplication.
-- Format 9:16 / 16:9, remplissage flou / recadré / bandes noires, 30 ou 60 i/s.
+- Format 9:16 / 16:9, 30 ou 60 i/s. Remplissage : flou, recadré, bandes noires, et pour le 9:16
+  **Suivi auto** (un cadre qui suit l'action, tous jeux, d'après le mouvement à l'écran),
+  **Jeu + zoom** (vue entière en haut, centre zoomé en dessous, pour les FPS et le sport) ou **Combat**.
+- Par clip : **vitesse** (¼× à 2×), **💥 impact** (zoom, tremblement et flash sur un coup, un kill, un but),
+  **🔁 replay au ralenti** du moment fort en un clic.
+- **Étalonnage** : Vif, Punchy, Ciné, Rétro, Noir et blanc. **Barre de progression** façon Shorts.
 - 8 transitions, fondu d'ouverture/fermeture, volume du jeu.
 - Textes (position, taille, couleur, fond, timing), retour à la ligne automatique.
-- Musique (importée dans la bibliothèque musicale, bouclée, volume réglable).
+- Musique (importée dans la bibliothèque musicale, bouclée, volume réglable), **coupes calées sur le
+  rythme** (tempo détecté, chaque coupe glisse sur le temps le plus proche) et **ducking** (la musique
+  baisse quand le jeu est fort).
 
 **Moments forts** (✨)
 - Chaque clip est analysé : pics de son (tirs, cris, explosions) ou, sans son, gros changements d'image.
 - Dans l'éditeur : courbe d'intensité sur la timeline, et un clic sur un moment le sélectionne.
-- « ✨ Best-of auto » : coche des clips, ClipForge garde le meilleur moment de chacun (60 s max).
+- « ✨ Best-of auto » : coche des clips, ClipForge garde le meilleur moment de chacun (60 s max),
+  place un impact sur chaque pic, ouvre sur un moment fort, monte en intensité et finit sur le meilleur,
+  rejoué au ralenti.
 
 **Sous-titres automatiques** (🎙, onglet Textes du montage)
 - Reconnaissance vocale Whisper **en local** (transformers.js). Le modèle (≈ 80 Mo, ou 250 Mo en
@@ -61,7 +70,8 @@ Chromium de Playwright s'il est présent (`CHROME_PATH` pour en indiquer un autr
 - 7 langues, style TikTok (gros, centré, majuscules) ou classique, 2 à 8 mots par ligne, chaque ligne
   reste modifiable. Régénérer remplace les anciens sous-titres sans toucher tes textes.
 
-**Modèles de montage** : 3 modèles fournis (TikTok dynamique, Best-of flou, YouTube classique), et
+**Modèles de montage** : modèles fournis par genre (FPS / Battle royale, Sport / Course, Combat,
+Edit sur le beat, Cinématique) et par plateforme (TikTok dynamique, Best-of flou, YouTube classique), et
 « Enregistrer ce style » pour garder les tiens (format, transitions, musique, textes fixes comme ton pseudo).
 
 **Sur le téléphone** (⚙ Réglages → Accès depuis le téléphone)
@@ -124,7 +134,8 @@ server/
   remote.js      accès téléphone (clé, QR) + protection anti-CSRF
   jobs.js        tâches longues suivies par l'interface
   mcp.js         outils MCP (pour Claude Code, Gemini CLI…) ; bin/clipforge-mcp.js : pont stdio
-  camera.js      caméra virtuelle du mode Combat ; tracking.js détection des persos
+  camera.js      caméras virtuelles (Combat, Suivi auto) ; tracking.js détection des persos et du mouvement
+  beats.js       tempo et temps forts de la musique (coupes sur le rythme)
   cloud.js       sources cloud via rclone ; unzip.js, rclone-output.js
   ai.js          fournisseurs d'IA ; ai-features.js ce que l'IA fait dans ClipForge
   db.js          SQLite (node:sqlite)

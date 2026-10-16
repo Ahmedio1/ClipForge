@@ -144,7 +144,8 @@ function timeline() {
       if (!clip) return null;
       const start = Math.min(s.start, clip.duration);
       const end = Math.min(s.end > s.start ? s.end : clip.duration, clip.duration);
-      return end - start >= 0.3 ? { ...s, start, end, dur: end - start, clip } : null;
+      const speed = s.speed || 1;
+      return end - start >= 0.3 ? { ...s, speed, start, end, dur: (end - start) / speed, clip } : null;
     })
     .filter(Boolean);
   const useX = data.transition !== 'none' && segs.length > 1;
@@ -189,6 +190,7 @@ function renderSeq() {
       <div class="seq-item ${s.id === mt.selected ? 'active' : ''} ${eff ? '' : 'invalid'}" draggable="true"
            data-seg="${s.id}" style="width:${Math.max(84, dur * 22)}px">
         <div class="seq-thumb" style="${clip ? `background-image:url(/media/thumbs/${clip.id})` : ''}"></div>
+        ${s.speed !== 1 || s.impact != null ? `<span class="seq-fx">${s.speed !== 1 ? `${String(s.speed).replace('.', ',')}×` : ''}${s.impact != null ? ' 💥' : ''}</span>` : ''}
         <div class="seq-label"><span>${i + 1}. ${esc(clip ? clip.title || clip.game : 'Clip introuvable')}</span><b>${fmtTime(dur)}</b></div>
       </div>`;
   }).join('') || '<div class="muted seq-empty">Séquence vide. Clique sur « ＋ Ajouter ».</div>';
@@ -248,6 +250,9 @@ function renderSegInspector() {
   $('#mt-seg-start').value = seg.start.toFixed(1);
   $('#mt-seg-end').value = (seg.end || clip?.duration || 0).toFixed(1);
   $('#mt-seg-start').max = $('#mt-seg-end').max = clip?.duration ?? 0;
+  $$('#mt-seg-speed button').forEach((b) => b.classList.toggle('active', Number(b.dataset.speed) === seg.speed));
+  $('#mt-seg-impact-val').textContent = seg.impact != null ? `à ${seg.impact.toFixed(1)} s du clip` : '(aucun)';
+  $('#mt-seg-impact-clear').disabled = seg.impact == null;
 }
 
 function setSegBounds(start, end) {
@@ -279,6 +284,44 @@ $('#mt-seg-out').addEventListener('click', () => {
   const t = currentClipTime();
   if (t == null) return toast('Place la tête de lecture dans ce clip', true);
   setSegBounds(selectedSeg().start, t);
+});
+$('#mt-seg-speed').addEventListener('click', (e) => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  selectedSeg().speed = Number(b.dataset.speed);
+  renderSegInspector();
+  changed();
+  seekGlobal(mt.global);
+});
+$('#mt-seg-impact').addEventListener('click', () => {
+  const t = currentClipTime();
+  if (t == null) return toast('Place la tête de lecture sur le moment du coup dans ce clip', true);
+  selectedSeg().impact = Number(t.toFixed(2));
+  renderSegInspector();
+  changed();
+});
+$('#mt-seg-impact-clear').addEventListener('click', () => {
+  selectedSeg().impact = null;
+  renderSegInspector();
+  changed();
+});
+// slow-motion replay of the moment: around the impact if there is one, else the clip's last seconds
+$('#mt-seg-replay').addEventListener('click', () => {
+  const segs = mt.project.data.segments;
+  const i = segs.findIndex((s) => s.id === mt.selected);
+  const seg = segs[i];
+  const clip = mt.project.clips[seg.clipId];
+  const end = seg.end > seg.start ? seg.end : clip?.duration ?? seg.start + 3;
+  const peak = seg.impact ?? Math.max(seg.start, end - 1);
+  const replay = {
+    id: newId(), clipId: seg.clipId, speed: 0.5, impact: seg.impact,
+    start: Math.max(seg.start, peak - 1.5), end: Math.min(end, peak + 0.8),
+  };
+  segs.splice(i + 1, 0, replay);
+  mt.selected = replay.id;
+  changed();
+  renderSegInspector();
+  toast('Replay au ralenti ajouté 🔁');
 });
 $('#mt-seg-dup').addEventListener('click', () => {
   const segs = mt.project.data.segments;
@@ -488,7 +531,7 @@ async function renderTemplates() {
   $('#tpl-list').innerHTML = list.map((t) => `
     <div class="tpl">
       <div><b>${esc(t.name)}</b>
-        <div class="muted small">${t.data.format === 'vertical' ? '9:16' : '16:9'} · ${{ blur: 'fond flou', crop: 'recadré', bars: 'bandes noires' }[t.data.fit]}
+        <div class="muted small">${t.data.format === 'vertical' ? '9:16' : '16:9'} · ${{ blur: 'fond flou', crop: 'recadré', bars: 'bandes noires', follow: 'suivi auto', stack: 'jeu + zoom', fight: 'combat' }[t.data.fit]}
           · ${t.data.transition === 'none' ? 'coupes sèches' : t.data.transition} · ${t.data.fps} i/s
           ${t.data.music ? ' · 🎵' : ''}${t.data.texts?.length ? ` · ${t.data.texts.length} texte(s)` : ''}</div></div>
       <button class="btn small primary" data-apply-tpl="${t.id}">Appliquer</button>
@@ -542,6 +585,8 @@ function renderStyle() {
   $('#mt-fade').checked = d.fadeInOut;
   $('#mt-gv').value = d.gameVolume;
   $('#mt-gv-val').textContent = `${Math.round(d.gameVolume * 100)} %`;
+  $('#mt-grade').value = d.grade;
+  $('#mt-progress').checked = d.progressBar;
 }
 
 $$('.seg-control[data-bind]').forEach((ctrl) => ctrl.addEventListener('click', (e) => {
@@ -562,6 +607,16 @@ $('#mt-td').addEventListener('input', (e) => {
   renderStyle();
   changed();
 });
+$('#mt-grade').addEventListener('change', (e) => {
+  mt.project.data.grade = e.target.value;
+  changed({ seq: false });
+});
+for (const [id, key] of [['#mt-progress', 'progressBar'], ['#mt-beat', 'beatSync'], ['#mt-duck', 'duck']]) {
+  $(id).addEventListener('change', (e) => {
+    mt.project.data[key] = e.target.checked;
+    changed({ seq: false });
+  });
+}
 $('#mt-fade').addEventListener('change', (e) => {
   mt.project.data.fadeInOut = e.target.checked;
   changed({ seq: false });
@@ -590,6 +645,9 @@ function renderMusic() {
   $('#mt-mv').value = vol;
   $('#mt-mv').disabled = !current;
   $('#mt-mv-val').textContent = `${Math.round(vol * 100)} %`;
+  $('#mt-beat').checked = d.beatSync;
+  $('#mt-duck').checked = d.duck;
+  $('#mt-beat').disabled = $('#mt-duck').disabled = !current;
   if (current) {
     const src = `/media/music/${encodeURIComponent(current)}`;
     if (!mt.audio.src.endsWith(src)) mt.audio.src = src;
@@ -664,10 +722,23 @@ function renderCanvas() {
   const { w, h } = fitBox($('#montage .stage'), d.format === 'vertical' ? 9 / 16 : 16 / 9, 0.62);
   const canvas = $('#mt-canvas');
   Object.assign(canvas.style, { width: `${w}px`, height: `${h}px` });
-  canvas.dataset.fit = d.fit;
+  // the 9:16-only layouts look like black bars in 16:9, as in the render
+  canvas.dataset.fit = d.format !== 'vertical' && ['follow', 'stack', 'fight'].includes(d.fit) ? 'bars' : d.fit;
+  canvas.dataset.grade = d.grade;
+  canvas.classList.toggle('with-progress', d.progressBar);
   renderOverlayTexts();
 }
 window.addEventListener('resize', () => !$('#montage').hidden && renderCanvas());
+
+/** "Jeu + zoom" preview: the centre of the frame, as the render crops it (72 % of the height). */
+function drawZoom() {
+  const v = mt.video;
+  const c = $('#mt-zoom');
+  if (!v.videoWidth) return;
+  const ch = v.videoHeight * 0.72;
+  const cw = Math.min(v.videoWidth, (ch * c.width) / c.height);
+  c.getContext('2d').drawImage(v, (v.videoWidth - cw) / 2, (v.videoHeight - ch) / 2, cw, ch, 0, 0, c.width, c.height);
+}
 
 function renderOverlayTexts() {
   const canvas = $('#mt-canvas');
@@ -691,7 +762,8 @@ function loadSegment(i, localTime, autoplay) {
   const src = `/media/clips/${seg.clip.id}`;
   const v = mt.video;
   const go = () => {
-    v.currentTime = seg.start + localTime;
+    v.currentTime = seg.start + localTime * seg.speed;
+    v.playbackRate = seg.speed;
     if (autoplay) v.play().catch(() => {});
   };
   $('#mt-bg').style.backgroundImage = `url(/media/thumbs/${seg.clip.id})`;
@@ -745,7 +817,7 @@ function tick() {
     const { segs, total } = timeline();
     const seg = segs[mt.segIndex];
     if (seg && mt.playing && !mt.video.seeking) {
-      const local = mt.video.currentTime - seg.start;
+      const local = (mt.video.currentTime - seg.start) / seg.speed;
       if (local >= seg.visible || mt.video.ended) {
         if (mt.segIndex + 1 < segs.length) loadSegment(mt.segIndex + 1, 0, true);
         else {
@@ -760,6 +832,10 @@ function tick() {
     $('#mt-time').textContent = fmtTime(mt.global);
     $('#mt-play').textContent = mt.playing ? '❚❚' : '▶';
     $('#mt-scrub-head').style.left = `${total ? (mt.global / total) * 100 : 0}%`;
+    $('#mt-progress-bar').style.width = `${total ? (mt.global / total) * 100 : 0}%`;
+    const canvas = $('#mt-canvas');
+    canvas.classList.toggle('impact', !!seg && seg.impact != null && Math.abs(mt.video.currentTime - seg.impact) < 0.12 * seg.speed);
+    if (canvas.dataset.fit === 'stack') drawZoom();
     renderOverlayTexts();
   }
   mt.raf = requestAnimationFrame(tick);

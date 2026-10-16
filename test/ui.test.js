@@ -226,8 +226,19 @@ t('best-of auto from a selection', async () => {
   await page.locator('.card').nth(1).click({ modifiers: ['Shift'] });
   await page.click('#selbar-auto');
   await page.waitForSelector('#montage:not([hidden]) .seq-item');
-  assert.equal(await page.locator('.seq-item').count(), 2);
+  // two moments, the best one replayed in slow motion
+  assert.equal(await page.locator('.seq-item').count(), 3);
+  assert.equal(await page.locator('.seq-item .seq-fx', { hasText: '0,5×' }).count(), 1);
   assert.match(await page.inputValue('#mt-name'), /Best-of auto/);
+  await page.locator('.seq-item', { has: page.locator('.seq-fx', { hasText: '0,5×' }) }).click();
+  assert.equal(await page.locator('#mt-seg-speed button.active').textContent(), '½×');
+  await shot('7b-bestof-effects');
+  await page.click('.tab[data-tab="style"]');
+  await page.locator('[data-bind="fit"] [data-value="stack"]').click();
+  await page.selectOption('#mt-grade', 'vivid');
+  await page.check('#mt-progress');
+  assert.equal(await page.getAttribute('#mt-canvas', 'data-grade'), 'vivid');
+  await shot('7c-style-stack');
 });
 
 t('templates: apply a built-in, save the current style', async () => {
