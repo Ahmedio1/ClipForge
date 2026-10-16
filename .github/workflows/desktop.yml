@@ -7,6 +7,10 @@ on:
   push:
     tags: ['v*']
 
+# creating the release and uploading the installers needs write access (the token is read-only by default)
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
