@@ -4,6 +4,10 @@ import ffprobeStatic from 'ffprobe-static';
 
 export { ffmpegPath };
 
+// Streaming platforms normalise to about -14 LUFS; matching it avoids being turned down.
+// The trailing aformat pins the layout loudnorm leaves open (else the graph can't negotiate).
+export const LOUDNORM = 'loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo';
+
 export function run(bin, args, onStdout) {
   return new Promise((resolve, reject) => {
     const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -75,7 +79,9 @@ export function exportVideo({ input, output, start, end, format, mute, hasAudio 
   const args = ['-y', '-v', 'error', '-ss', String(start), '-i', input, '-t', String(duration)];
   if (filter) args.push('-filter_complex', filter, '-map', '[v]');
   else args.push('-map', '0:v:0');
-  if (!mute && hasAudio) args.push('-map', '0:a:0', '-c:a', 'aac', '-b:a', '192k');
+  if (!mute && hasAudio) {
+    args.push('-map', '0:a:0', '-af', LOUDNORM, '-c:a', 'aac', '-b:a', '192k');
+  }
   args.push(
     '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p',
     '-movflags', '+faststart', '-progress', 'pipe:1', output,

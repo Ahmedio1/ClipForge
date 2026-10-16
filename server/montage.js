@@ -1,11 +1,13 @@
 import fs from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { BOX_H, BOX_W, cameraFilter, planCamera } from './camera.js';
+import { LOUDNORM } from './media.js';
 
 export const CANVAS = {
   landscape: { w: 1920, h: 1080 },
   vertical: { w: 1080, h: 1920 },
 };
-export const FITS = ['blur', 'crop', 'bars'];
+export const FITS = ['blur', 'crop', 'bars', 'fight'];
 export const TRANSITIONS = ['none', 'fade', 'fadeblack', 'dissolve', 'wipeleft', 'slideleft', 'circleopen', 'zoomin'];
 const TEXT_SIZES = { S: 0.05, M: 0.075, L: 0.11 };
 const TEXT_POSITIONS = ['top', 'center', 'bottom'];
@@ -100,6 +102,10 @@ export const BUILTIN_TEMPLATES = [
     data: { format: 'vertical', fit: 'blur', fps: 30, transition: 'fadeblack', transitionDuration: 0.5, fadeInOut: true, gameVolume: 1, music: null, texts: [] },
   },
   {
+    name: 'Combat (Tekken, Street Fighter…)',
+    data: { format: 'vertical', fit: 'fight', fps: 60, transition: 'fade', transitionDuration: 0.2, fadeInOut: true, gameVolume: 1, music: null, texts: [] },
+  },
+  {
     name: 'YouTube classique',
     data: { format: 'landscape', fit: 'bars', fps: 60, transition: 'fade', transitionDuration: 0.6, fadeInOut: true, gameVolume: 1, music: null, texts: [] },
   },
@@ -154,6 +160,31 @@ function filterPath(p) {
   return `'${p.replace(/\\/g, '/').replace(/'/g, "'\\\\''").replace(/:/g, '\\:')}'`;
 }
 
+/**
+ * Fighting-game vertical layout for one segment: blurred backdrop, the HUD (health bars) as a
+ * full-width band, and below it a zoomed window that follows the characters.
+ */
+function fightLayout(i, seg, plan, { W, H, norm }) {
+  const srcW = seg.clip.width || 1920;
+  const srcH = seg.clip.height || 1080;
+  const cam = plan || planCamera([], { start: seg.start, end: seg.end, srcW, srcH });
+  const even = (n) => Math.round(n / 2) * 2;
+  const hudOut = even((W * cam.hudH) / srcW);
+  const gameH = even((W * BOX_H) / BOX_W);
+  const gap = 12;
+  const block = hudOut + gap + gameH;
+  // a bit above centre, leaving room for a hook title on top and subtitles below
+  const top = even(Math.max(H * 0.14, Math.min(H - block, (H - block) / 2 - H * 0.03)));
+  return [
+    `[${i}:v]setpts=PTS-STARTPTS,split=3[fa${i}][fb${i}][fc${i}]`,
+    `[fa${i}]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},boxblur=24:2,eq=brightness=-0.2:saturation=0.85[bg${i}]`,
+    `[fb${i}]crop=${srcW}:${cam.hudH}:0:0,scale=${W}:${hudOut}[hud${i}]`,
+    `[fc${i}]${cameraFilter(cam)},scale=${W}:${gameH}[gm${i}]`,
+    `[bg${i}][hud${i}]overlay=0:${top}[bh${i}]`,
+    `[bh${i}][gm${i}]overlay=0:${top + hudOut + gap},${norm}[v${i}]`,
+  ];
+}
+
 /** Effective segments (clamped to clip duration, too-short ones dropped) and total length. */
 export function planTimeline(data, clipsById) {
   const segments = data.segments
@@ -178,7 +209,7 @@ export function planTimeline(data, clipsById) {
  * `textFiles` receives the text overlays' contents keyed by path to write before running
  * (drawtext reads from files so any user text is safe from filter escaping).
  */
-export function buildMontageArgs(data, clipsById, { output, musicPath, musicDuration, textDir, fontPath = findFont() }) {
+export function buildMontageArgs(data, clipsById, { output, musicPath, musicDuration, textDir, cameras = new Map(), fontPath = findFont() }) {
   const { w: W, h: H } = CANVAS[data.format];
   const { segments, td, useXfade, total } = planTimeline(data, clipsById);
   if (segments.length === 0) throw new Error('Le montage ne contient aucun clip');
@@ -190,14 +221,17 @@ export function buildMontageArgs(data, clipsById, { output, musicPath, musicDura
   segments.forEach((s, i) => {
     args.push('-ss', s.start.toFixed(3), '-t', s.dur.toFixed(3), '-i', s.clip.path);
     const norm = `fps=${data.fps},format=yuv420p,setsar=1,trim=duration=${s.dur.toFixed(3)},setpts=PTS-STARTPTS,settb=AVTB`;
-    if (data.fit === 'blur') {
+    const fit = data.fit === 'fight' && data.format !== 'vertical' ? 'bars' : data.fit;
+    if (fit === 'fight') {
+      graph.push(...fightLayout(i, s, cameras.get(s.id), { W, H, norm }));
+    } else if (fit === 'blur') {
       graph.push(
         `[${i}:v]split[bg${i}][fg${i}]`,
         `[bg${i}]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},boxblur=20:2[bgb${i}]`,
         `[fg${i}]scale=${W}:${H}:force_original_aspect_ratio=decrease:force_divisible_by=2[fgs${i}]`,
         `[bgb${i}][fgs${i}]overlay=(W-w)/2:(H-h)/2,${norm}[v${i}]`,
       );
-    } else if (data.fit === 'crop') {
+    } else if (fit === 'crop') {
       graph.push(`[${i}:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},${norm}[v${i}]`);
     } else {
       graph.push(
@@ -280,6 +314,10 @@ export function buildMontageArgs(data, clipsById, { output, musicPath, musicDura
   // while copying the video. Mixing a looped input in the main graph can deadlock
   // ffmpeg's scheduler when a segment runs to its clip's very end.
   const withMusic = !!(data.music && musicPath && musicDuration);
+  if (!withMusic) {
+    graph.push(`[${aLabel}]${LOUDNORM}[aln]`);
+    aLabel = 'aln';
+  }
   const pass1Out = withMusic ? `${output}.pass1.mkv` : output;
   args.push(
     '-filter_complex', graph.join(';'),
@@ -305,7 +343,7 @@ export function buildMontageArgs(data, clipsById, { output, musicPath, musicDura
         '-filter_complex',
         `[1:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,` +
         `atrim=0:${total.toFixed(3)},asetpts=PTS-STARTPTS,volume=${data.music.volume}${fade}[mus];` +
-        `[0:a][mus]amix=inputs=2:duration=first:normalize=0[am]`,
+        `[0:a][mus]amix=inputs=2:duration=first:normalize=0,${LOUDNORM}[am]`,
         '-map', '0:v', '-map', '[am]', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k',
         '-t', total.toFixed(3), '-movflags', '+faststart', '-progress', 'pipe:1', output,
       ],

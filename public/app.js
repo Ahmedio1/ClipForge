@@ -396,7 +396,8 @@ const selectedFormat = () => $('input[name=format]:checked').value;
 
 function updateMask() {
   const fmt = selectedFormat();
-  $('#ed-mask').hidden = fmt === 'original';
+  // the fight layout's tracked camera is only computed at render time
+  $('#ed-mask').hidden = fmt === 'original' || fmt === 'vertical-fight';
   $('#ed-mask').classList.toggle('blur', fmt === 'vertical-blur');
 }
 $$('input[name=format]').forEach((r) => r.addEventListener('change', updateMask));

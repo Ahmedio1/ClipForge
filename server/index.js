@@ -151,7 +151,7 @@ app.post('/api/clips/:id/export', (req, res) => {
   if (!clip) return notFound(res);
   const start = Math.max(0, Number(req.body.start) || 0);
   const end = Math.min(clip.duration, Number(req.body.end) || clip.duration);
-  const format = FORMATS.includes(req.body.format) ? req.body.format : 'original';
+  const format = [...FORMATS, 'vertical-fight'].includes(req.body.format) ? req.body.format : 'original';
   if (end - start < 0.3) return res.status(400).json({ error: 'Sélection trop courte' });
   const id = enqueueExport(clip, {
     start, end, format, mute: !!req.body.mute, title: req.body.title || null,
@@ -504,9 +504,11 @@ app.post('/api/projects/:id/subtitles', (req, res) => {
 
 // ---- Templates -----------------------------------------------------------------
 
-if (db.prepare('SELECT COUNT(*) AS n FROM templates').get().n === 0) {
+{
+  // add built-ins that don't exist yet (new versions bring new ones)
+  const have = new Set(db.prepare('SELECT name FROM templates WHERE builtin = 1').all().map((t) => t.name));
   const insert = db.prepare('INSERT INTO templates (name, data, builtin) VALUES (?, ?, 1)');
-  for (const t of BUILTIN_TEMPLATES) insert.run(t.name, JSON.stringify(t.data));
+  for (const t of BUILTIN_TEMPLATES) if (!have.has(t.name)) insert.run(t.name, JSON.stringify(t.data));
 }
 
 const templateRow = (t) => ({ id: t.id, name: t.name, builtin: !!t.builtin, data: JSON.parse(t.data) });
@@ -553,7 +555,14 @@ app.put('/api/remote', localOnly, async (req, res) => {
   res.json(await remoteStatus(PORT));
 });
 
-app.listen(PORT, '127.0.0.1', () => {
+app.listen(PORT, '127.0.0.1', (err) => {
+  // Express 5 reports listen errors here instead of throwing
+  if (err) {
+    console.error(err.code === 'EADDRINUSE'
+      ? `Le port ${PORT} est déjà utilisé : ClipForge tourne sûrement déjà (http://localhost:${PORT}).`
+      : `Démarrage impossible : ${err.message}`);
+    process.exit(1);
+  }
   console.log(`ClipForge → http://localhost:${PORT}`);
   console.log(`Dossier des clips : ${getConfig().clipsDir}`);
   watchClipsDir();

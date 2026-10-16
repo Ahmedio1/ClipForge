@@ -166,3 +166,50 @@ test('templates carry style and texts but never clips or subtitles', () => {
   assert.equal(merged.segments[0].clipId, 7);
   assert.deepEqual(merged.texts.map((t) => t.text).sort(), ['@moi', 'sous-titre']);
 });
+
+// ---- fight layout camera ------------------------------------------------------------
+
+import { fightersBox, piecewise, planCamera } from '../server/camera.js';
+
+/** Evaluates a piecewise() ffmpeg expression in JS. */
+const evalExpr = (expr, t) => Function('t', `return ${expr
+  .replace(/lt\(t,([\d.]+)\)/g, '(t<$1?1:0)')
+  .replace(/gte\(t,([\d.]+)\)/g, '(t>=$1?1:0)')};`)(t);
+
+test('fightersBox ignores HUD portraits and specks, unions the fighters', () => {
+  const d = (x0, y0, x1, y1, label = 'person', score = 0.9) => ({ label, score, box: { x0, y0, x1, y1 } });
+  assert.equal(fightersBox([d(0.01, 0, 0.05, 0.1)]), null, 'HUD portrait');
+  assert.deepEqual(fightersBox([
+    d(0.2, 0.3, 0.35, 0.9), d(0.6, 0.35, 0.8, 0.95), d(0.5, 0.5, 0.51, 0.51), d(0.1, 0.1, 0.9, 0.9, 'kite'),
+  ]), [0.2, 0.3, 0.8, 0.95]);
+});
+
+test('camera zooms in on close fighters and out when they separate', () => {
+  const src = { srcW: 1920, srcH: 1080 };
+  const close = planCamera([0, 1, 2].map((sec) => ({ sec, box: [0.4, 0.4, 0.6, 0.9] })), { start: 0, end: 2, ...src });
+  const far = planCamera([0, 1, 2].map((sec) => ({ sec, box: [0.02, 0.4, 0.98, 0.9] })), { start: 0, end: 2, ...src });
+  assert.ok(close.keyframes.every((k) => k.z > 1), 'tight shot');
+  assert.ok(far.keyframes.every((k) => k.z < 0.8), 'wide shot');
+  assert.equal(close.keyframes[1].cx, 0.5);
+  // the HUD band is cut off the top and the zoomed band always covers the 1080×720 box
+  assert.equal(far.top, 114);
+  assert.ok(far.keyframes.every((k) => 1920 * k.z >= 1080 && far.bandH * k.z >= 720));
+});
+
+test('camera fills detection gaps and follows the action sideways', () => {
+  const cam = planCamera([
+    { sec: 10, box: [0.1, 0.4, 0.3, 0.9] }, { sec: 11, box: null }, { sec: 12, box: [0.6, 0.4, 0.8, 0.9] },
+  ], { start: 10, end: 12, srcW: 1920, srcH: 1080 });
+  assert.equal(cam.keyframes.length, 3);
+  assert.ok(cam.keyframes[0].cx < cam.keyframes[1].cx && cam.keyframes[1].cx < cam.keyframes[2].cx);
+  assert.equal(cam.keyframes[0].t, 0.5);
+});
+
+test('piecewise expression interpolates between keyframes and holds outside', () => {
+  const keys = [{ t: 0.5, z: 1 }, { t: 1.5, z: 2 }, { t: 2.5, z: 2 }];
+  const e = piecewise(keys, 'z');
+  assert.equal(evalExpr(e, 0), 1);
+  assert.equal(evalExpr(e, 1), 1.5);
+  assert.equal(evalExpr(e, 1.5), 2);
+  assert.equal(evalExpr(e, 9), 2);
+});

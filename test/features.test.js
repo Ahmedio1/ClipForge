@@ -1,11 +1,12 @@
 // End-to-end: highlights, auto best-of, templates, subtitles (real Whisper), phone access.
 import assert from 'node:assert/strict';
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
 import ffmpegPath from 'ffmpeg-static';
+import ffprobeStatic from 'ffprobe-static';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'clipforge-feat-'));
@@ -188,6 +189,31 @@ test('automatic subtitles from real speech (Whisper, local)', { timeout: 600_000
   const again = await waitJob((await post(`/api/projects/${project.id}/subtitles`, { language: 'english' })).body);
   const { body: p2 } = await api(`/api/projects/${project.id}`);
   assert.equal(p2.data.texts.filter((x) => x.auto).length, again.count);
+});
+
+test('fight layout: vertical export with tracked camera, normalised loudness', { timeout: 300_000 }, async () => {
+  const clip = await clipByName('21-04-33');
+  const { body: job } = await post(`/api/clips/${clip.id}/export`, { start: 2, end: 8, format: 'vertical-fight' });
+  let e;
+  for (let i = 0; i < 600; i++) {
+    e = (await api('/api/exports')).body.find((x) => x.id === job.id);
+    if (e.status === 'failed') throw new Error(e.error);
+    if (e.status === 'done') break;
+    await sleep(300);
+  }
+  assert.equal(e.status, 'done');
+  const info = JSON.parse(execFileSync(ffprobeStatic.path, [
+    '-v', 'error', '-print_format', 'json', '-show_streams', '-show_format', e.out_path,
+  ], { encoding: 'utf8' }));
+  const v = info.streams.find((x) => x.codec_type === 'video');
+  assert.deepEqual([v.width, v.height], [1080, 1920]);
+  assert.ok(Math.abs(Number(info.format.duration) - 6) < 0.15);
+
+  // integrated loudness close to the -14 LUFS target (ebur128 reports on stderr)
+  const { stderr } = spawnSync(ffmpegPath, ['-hide_banner', '-nostats', '-i', e.out_path, '-af', 'ebur128', '-f', 'null', '-'],
+    { encoding: 'utf8' });
+  const lufs = Number(stderr.match(/I:\s+(-?[\d.]+) LUFS/g).at(-1).match(/-?[\d.]+/)[0]);
+  assert.ok(Math.abs(lufs - -14) < 2, `loudness ${lufs} LUFS`);
 });
 
 test('cross-site requests are refused', async () => {
