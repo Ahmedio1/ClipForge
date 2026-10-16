@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ClipForge</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%2311151c'/><path d='M12 9l12 7-12 7z' fill='%238cff5a'/></svg>">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <button id="btn-menu" class="btn ghost icon menu-btn" title="Menu">☰</button>
+    <div class="brand"><span class="brand-mark">▶</span> <span class="brand-name">ClipForge</span></div>
+    <input id="search" class="search" type="search" placeholder="Rechercher un jeu, un titre, un tag…" autocomplete="off">
+    <select id="sort" class="select" aria-label="Trier">
+      <option value="recent">Plus récents</option>
+      <option value="oldest">Plus anciens</option>
+      <option value="longest">Plus longs</option>
+      <option value="shortest">Plus courts</option>
+    </select>
+    <label class="btn ghost" title="Importer des vidéos">
+      ⇪ <span class="hide-sm">Importer</span>
+      <input id="import-files" type="file" accept="video/*" multiple hidden>
+    </label>
+    <button id="btn-scan" class="btn ghost" title="Rechercher les nouveaux clips">
+      <span class="scan-dot"></span> <span class="hide-sm">Rescanner</span>
+    </button>
+    <button id="btn-settings" class="btn ghost" title="Réglages">⚙</button>
+  </header>
+
+  <div class="layout">
+    <nav class="sidebar">
+      <div class="nav-group">
+        <button class="nav-item" data-nav="all"><span>🎞</span> Tous les clips <em id="count-all"></em></button>
+        <button class="nav-item" data-nav="favorites"><span>★</span> Favoris</button>
+        <button class="nav-item" data-nav="projects"><span>✂</span> Montages</button>
+        <button class="nav-item" data-nav="exports"><span>⇪</span> Exports &amp; publication <em id="exports-badge"></em></button>
+      </div>
+      <div class="nav-title">Jeux</div>
+      <div id="games" class="nav-group"></div>
+    </nav>
+
+    <main id="main" class="main"></main>
+  </div>
+
+  <!-- Editor -->
+  <section id="editor" class="editor" hidden>
+    <div class="editor-head">
+      <button class="btn ghost" data-close-editor>← Bibliothèque</button>
+      <div class="editor-title">
+        <strong id="ed-game"></strong>
+        <span id="ed-date" class="muted"></span>
+      </div>
+      <button id="ed-fav" class="btn ghost fav-toggle" title="Favori">☆</button>
+    </div>
+
+    <div class="editor-body">
+      <div class="stage-col">
+        <div class="stage">
+          <div id="ed-frame" class="frame">
+            <video id="ed-video" preload="auto" playsinline></video>
+            <div id="ed-mask" class="mask" hidden><div class="mask-window"></div></div>
+          </div>
+        </div>
+
+        <div class="transport">
+          <button id="ed-play" class="btn icon" title="Lecture (Espace)">▶</button>
+          <span class="tc"><span id="ed-time">0:00.0</span> / <span id="ed-dur">0:00.0</span></span>
+          <label class="check"><input id="ed-loop" type="checkbox" checked> Boucle sur la sélection</label>
+          <span class="spacer"></span>
+          <button id="ed-set-in" class="btn small" title="Début ici (I)">[ Début</button>
+          <button id="ed-set-out" class="btn small" title="Fin ici (O)">Fin ]</button>
+        </div>
+
+        <div id="ed-track" class="track">
+          <canvas id="ed-curve" class="curve"></canvas>
+          <div id="ed-marks" class="marks"></div>
+          <div id="ed-sel" class="sel">
+            <div class="handle in" data-handle="in"></div>
+            <div class="handle out" data-handle="out"></div>
+          </div>
+          <div id="ed-head" class="playhead"></div>
+        </div>
+        <p class="hint">Espace : lecture · I / O : début / fin · ← → : ±1 s (Maj : ±5 s) · , . : image par image</p>
+      </div>
+
+      <aside class="panel">
+        <div class="field">
+          <span>✨ Moments forts</span>
+          <div id="ed-highlights" class="highlights"><span class="muted small">Analyse…</span></div>
+        </div>
+        <label class="field">
+          <span>Titre du clip</span>
+          <input id="ed-title" type="text" placeholder="ex. Ace en ranked">
+        </label>
+        <label class="field">
+          <span>Tags</span>
+          <input id="ed-tags" type="text" placeholder="clutch, ace, fun">
+        </label>
+
+        <div class="field">
+          <span>Format d’export</span>
+          <div class="formats">
+            <label class="format">
+              <input type="radio" name="format" value="original" checked>
+              <span class="fmt-shape wide"></span>
+              <b>Original</b><small>YouTube, Twitter</small>
+            </label>
+            <label class="format">
+              <input type="radio" name="format" value="vertical-blur">
+              <span class="fmt-shape tall blur"></span>
+              <b>Vertical + flou</b><small>Image entière</small>
+            </label>
+            <label class="format">
+              <input type="radio" name="format" value="vertical-crop">
+              <span class="fmt-shape tall"></span>
+              <b>Vertical recadré</b><small>TikTok, Shorts</small>
+            </label>
+          </div>
+        </div>
+
+        <label class="check"><input id="ed-mute" type="checkbox"> Couper le son</label>
+
+        <div class="summary">
+          <div><span class="muted">Sélection</span> <b id="ed-sel-range"></b></div>
+          <div><span class="muted">Durée</span> <b id="ed-sel-dur"></b></div>
+        </div>
+
+        <button id="ed-export" class="btn primary block">Exporter la sélection</button>
+
+        <div class="field">
+          <span>Ou l’ajouter à un montage</span>
+          <div id="ed-add-montage" class="add-montage"></div>
+        </div>
+      </aside>
+    </div>
+  </section>
+
+  <!-- Montage editor -->
+  <section id="montage" class="editor" hidden>
+    <div class="editor-head">
+      <button class="btn ghost" data-close-montage>← Montages</button>
+      <input id="mt-name" class="title-input" type="text" aria-label="Nom du montage">
+      <span id="mt-saved" class="muted small"></span>
+      <span class="spacer"></span>
+      <span id="mt-total" class="tc muted hide-sm"></span>
+      <button id="mt-templates" class="btn ghost">Modèles</button>
+      <button id="mt-render" class="btn primary">Rendre la vidéo</button>
+    </div>
+
+    <div class="editor-body">
+      <div class="stage-col">
+        <div class="stage">
+          <div id="mt-canvas" class="canvas">
+            <div id="mt-bg" class="canvas-bg"></div>
+            <video id="mt-video" preload="auto" playsinline></video>
+            <div id="mt-texts" class="canvas-texts"></div>
+          </div>
+          <audio id="mt-audio" preload="auto"></audio>
+        </div>
+
+        <div class="transport">
+          <button id="mt-play" class="btn icon" title="Lecture (Espace)">▶</button>
+          <span class="tc"><span id="mt-time">0:00.0</span> / <span id="mt-dur">0:00.0</span></span>
+          <span class="muted small">Aperçu rapide : les transitions apparaissent seulement dans le rendu final.</span>
+        </div>
+
+        <div class="seq-wrap">
+          <div id="mt-seq" class="seq"></div>
+          <button id="mt-add" class="seq-add" title="Ajouter des clips">＋<small>Ajouter</small></button>
+        </div>
+        <div id="mt-scrub" class="scrub"><div id="mt-scrub-head" class="playhead"></div></div>
+      </div>
+
+      <aside class="panel">
+        <div class="tabs" role="tablist">
+          <button class="tab active" data-tab="clip">Clip</button>
+          <button class="tab" data-tab="texts">Textes</button>
+          <button class="tab" data-tab="style">Style</button>
+          <button class="tab" data-tab="music">Musique</button>
+        </div>
+
+        <div class="tab-panel" data-panel="clip">
+          <div id="mt-seg-empty" class="muted">Sélectionne un clip dans la séquence pour le couper.</div>
+          <div id="mt-seg" hidden>
+            <div class="seg-title"><b id="mt-seg-game"></b> <span id="mt-seg-len" class="muted"></span></div>
+            <div class="row2">
+              <label class="field"><span>Début (s)</span><input id="mt-seg-start" type="number" step="0.1" min="0"></label>
+              <label class="field"><span>Fin (s)</span><input id="mt-seg-end" type="number" step="0.1" min="0"></label>
+            </div>
+            <div class="row2">
+              <button id="mt-seg-in" class="btn small">[ Début = position</button>
+              <button id="mt-seg-out" class="btn small">Fin = position ]</button>
+            </div>
+            <div class="row2">
+              <button id="mt-seg-dup" class="btn small">Dupliquer</button>
+              <button id="mt-seg-del" class="btn small danger">Retirer</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="tab-panel" data-panel="texts" hidden>
+          <details id="mt-subs" class="subs" open>
+            <summary>🎙 Sous-titres automatiques</summary>
+            <p class="muted small">ClipForge écoute les voix de tes clips (micro, vocal) et écrit les sous-titres. Tout se passe sur ton PC.</p>
+            <div class="row2">
+              <label class="field"><span>Langue</span>
+                <select id="sub-lang" class="select">
+                  <option value="french">Français</option><option value="english">Anglais</option>
+                  <option value="spanish">Espagnol</option><option value="german">Allemand</option>
+                  <option value="italian">Italien</option><option value="portuguese">Portugais</option>
+                  <option value="arabic">Arabe</option>
+                </select></label>
+              <label class="field"><span>Style</span>
+                <select id="sub-style" class="select">
+                  <option value="tiktok">TikTok (gros, centré)</option>
+                  <option value="classic">Classique (bas, fond)</option>
+                </select></label>
+            </div>
+            <div class="row2">
+              <label class="field"><span>Mots par ligne</span>
+                <select id="sub-words" class="select"><option>2</option><option>3</option><option selected>4</option><option>6</option><option>8</option></select></label>
+              <label class="field"><span>Précision</span>
+                <select id="sub-quality" class="select">
+                  <option value="fast">Rapide</option><option value="accurate">Précise (+ lent, 250 Mo)</option>
+                </select></label>
+            </div>
+            <button id="sub-run" class="btn primary block">Générer les sous-titres</button>
+            <div id="sub-status" class="muted small"></div>
+          </details>
+          <div id="mt-text-list" class="text-list"></div>
+          <button id="mt-text-add" class="btn block">＋ Ajouter un texte à la position actuelle</button>
+        </div>
+
+        <div class="tab-panel" data-panel="style" hidden>
+          <div class="field">
+            <span>Format</span>
+            <div class="seg-control" data-bind="format">
+              <button data-value="vertical">9:16 · TikTok / Shorts</button>
+              <button data-value="landscape">16:9 · YouTube</button>
+            </div>
+          </div>
+          <div class="field">
+            <span>Remplissage</span>
+            <div class="seg-control" data-bind="fit">
+              <button data-value="blur">Fond flou</button>
+              <button data-value="crop">Recadrer</button>
+              <button data-value="bars">Bandes noires</button>
+            </div>
+          </div>
+          <label class="field">
+            <span>Transition entre clips</span>
+            <select id="mt-transition" class="select">
+              <option value="none">Aucune (coupe sèche)</option>
+              <option value="fade">Fondu enchaîné</option>
+              <option value="fadeblack">Fondu au noir</option>
+              <option value="dissolve">Dissolution</option>
+              <option value="wipeleft">Balayage</option>
+              <option value="slideleft">Glissement</option>
+              <option value="circleopen">Cercle</option>
+              <option value="zoomin">Zoom</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Durée de transition : <b id="mt-td-val"></b></span>
+            <input id="mt-td" type="range" min="0.2" max="1.5" step="0.1">
+          </label>
+          <div class="field">
+            <span>Images par seconde</span>
+            <div class="seg-control" data-bind="fps">
+              <button data-value="30">30 i/s</button>
+              <button data-value="60">60 i/s</button>
+            </div>
+          </div>
+          <label class="check"><input id="mt-fade" type="checkbox"> Fondu au début et à la fin</label>
+          <label class="field">
+            <span>Volume du jeu : <b id="mt-gv-val"></b></span>
+            <input id="mt-gv" type="range" min="0" max="2" step="0.05">
+          </label>
+        </div>
+
+        <div class="tab-panel" data-panel="music" hidden>
+          <div id="mt-music-list" class="music-list"></div>
+          <label class="btn block upload-btn">
+            ＋ Importer une musique (mp3, m4a, wav…)
+            <input id="mt-music-file" type="file" accept="audio/*" hidden>
+          </label>
+          <label class="field">
+            <span>Volume de la musique : <b id="mt-mv-val"></b></span>
+            <input id="mt-mv" type="range" min="0" max="1.5" step="0.05">
+          </label>
+          <p class="muted small">La musique boucle si elle est plus courte que le montage. Utilise des sons libres de droits pour éviter les blocages Copyright.</p>
+        </div>
+      </aside>
+    </div>
+
+    <div id="mt-picker" class="picker" hidden>
+      <div class="picker-head">
+        <b>Ajouter des clips</b>
+        <input id="mt-picker-q" class="search" type="search" placeholder="Filtrer…">
+        <button class="btn" data-close-picker>Terminé</button>
+      </div>
+      <div id="mt-picker-grid" class="grid small-grid"></div>
+    </div>
+  </section>
+
+  <dialog id="templates" class="dialog">
+    <div class="pub-head"><h2>Modèles de montage</h2><button class="btn ghost" data-close-templates>✕</button></div>
+    <p class="muted small">Un modèle garde le style (format, transitions, musique, textes fixes comme ton pseudo), pas les clips.</p>
+    <div id="tpl-list" class="tpl-list"></div>
+    <div class="tpl-save">
+      <input id="tpl-name" type="text" placeholder="Nom du nouveau modèle">
+      <button id="tpl-save" class="btn">Enregistrer ce style</button>
+    </div>
+  </dialog>
+
+  <!-- Publish -->
+  <dialog id="publish" class="dialog wide">
+    <div class="pub-head">
+      <h2>Publier <span id="pub-name" class="muted"></span></h2>
+      <button class="btn ghost" data-close-publish>✕</button>
+    </div>
+    <div class="tabs" role="tablist">
+      <button class="tab active" data-ptab="youtube">YouTube</button>
+      <button class="tab" data-ptab="tiktok">TikTok</button>
+      <button class="tab" data-ptab="instagram">Instagram</button>
+      <button class="tab" data-ptab="x">X / Twitter</button>
+    </div>
+    <div id="pub-body"></div>
+  </dialog>
+
+  <div id="selbar" class="selbar" hidden>
+    <span id="selbar-count"></span>
+    <button id="selbar-auto" class="btn primary" title="Garde automatiquement le meilleur moment de chaque clip">✨ Best-of auto</button>
+    <button id="selbar-create" class="btn">Créer un montage</button>
+    <button id="selbar-clear" class="btn ghost">Annuler</button>
+  </div>
+
+  <dialog id="settings" class="dialog">
+    <form method="dialog" id="settings-form">
+      <h2>Réglages</h2>
+      <label class="field">
+        <span>Dossier des clips</span>
+        <input id="set-dir" type="text" required>
+        <small class="muted">ClipForge surveille ce dossier et ses sous-dossiers. Sous Windows, Xbox Game Bar enregistre dans <code>C:\Users\&lt;toi&gt;\Videos\Captures</code>. Ici, mets le dossier où tu copies ou synchronises ces clips.</small>
+      </label>
+      <div class="field phone">
+        <span>📱 Accès depuis le téléphone</span>
+        <label class="check"><input id="set-remote" type="checkbox"> Autoriser mon téléphone (même Wi-Fi) à utiliser ClipForge</label>
+        <div id="remote-info" hidden>
+          <p class="small">Scanne ce QR code avec l’appareil photo du téléphone. Il contient une clé secrète : ne le partage pas.</p>
+          <div id="remote-qr" class="qr"></div>
+          <code id="remote-url" class="url"></code>
+          <button type="button" id="remote-rotate" class="btn small">Changer la clé (déconnecte les téléphones)</button>
+        </div>
+      </div>
+      <div class="dialog-actions">
+        <button value="cancel" class="btn ghost" formnovalidate>Annuler</button>
+        <button value="save" class="btn primary">Enregistrer</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="drop" class="drop" hidden><div>Lâche tes clips ici pour les importer</div></div>
+  <div id="toasts" class="toasts"></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

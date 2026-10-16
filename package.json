@@ -1,0 +1,25 @@
+{
+  "name": "clipforge",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "node --test --test-concurrency=1 test/*.test.js",
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@huggingface/transformers": "^4.3.0",
+    "express": "^5.1.0",
+    "ffmpeg-static": "^5.2.0",
+    "ffprobe-static": "^3.1.0",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.56.1"
+  }
+}
