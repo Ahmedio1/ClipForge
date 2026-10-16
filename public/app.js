@@ -598,6 +598,11 @@ async function importFiles(files) {
 // ---------------------------------------------------------------- live updates
 
 async function poll() {
+  // nothing to refresh in a hidden tab (saves the phone's battery); resumes when shown again
+  if (document.hidden) {
+    document.addEventListener('visibilitychange', poll, { once: true });
+    return;
+  }
   try {
     const s = await api('/api/status');
     $('#btn-scan').classList.toggle('scanning', s.scanning);

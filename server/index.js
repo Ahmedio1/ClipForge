@@ -24,6 +24,11 @@ import { createMcpServer } from './mcp.js';
 const PORT = Number(process.env.PORT || 4317);
 const app = express();
 app.use(guard);
+// no framing by other sites (clickjacking on "publish", "delete"…)
+app.use((req, res, next) => {
+  res.set({ 'X-Frame-Options': 'DENY', 'Content-Security-Policy': "frame-ancestors 'none'", 'X-Content-Type-Options': 'nosniff' });
+  next();
+});
 app.use(express.json());
 
 /** For settings that only make sense (or are only safe) from the PC itself. */
@@ -95,16 +100,21 @@ app.patch('/api/clips/:id', (req, res) => {
   res.json(getClip.get(clip.id));
 });
 
+// These paths come from the database, never from the URL. Hidden folders are allowed because the
+// desktop app keeps its data in ~/.config/ClipForge, and `send` refuses them by default (404).
+const FROM_DB = { dotfiles: 'allow' };
+
 app.get('/media/clips/:id', (req, res) => {
   const clip = getClip.get(req.params.id);
   if (!clip || !fs.existsSync(clip.path)) return notFound(res);
-  res.sendFile(clip.path);
+  res.sendFile(clip.path, FROM_DB);
 });
 
 app.get('/media/thumbs/:id', (req, res) => {
   const file = thumbPath(Number(req.params.id));
   if (!fs.existsSync(file)) return notFound(res);
-  res.sendFile(file, { maxAge: '1h' });
+  // the URL carries ?v=<clip size>, so a changed clip gets a new URL and this one never goes stale
+  res.sendFile(file, { ...FROM_DB, maxAge: '30d', immutable: !!req.query.v });
 });
 
 /** One JPEG frame at ?t= seconds (used by AI clients to look at a clip or a render). */
@@ -187,8 +197,8 @@ app.get('/api/exports', (req, res) => {
 app.get('/media/exports/:id', (req, res) => {
   const exp = getExport.get(req.params.id);
   if (!exp?.out_path || !fs.existsSync(exp.out_path)) return notFound(res);
-  if (req.query.download) res.download(exp.out_path, path.basename(exp.out_path).replace(/^\d+_/, ''));
-  else res.sendFile(exp.out_path);
+  if (req.query.download) res.download(exp.out_path, path.basename(exp.out_path).replace(/^\d+_/, ''), FROM_DB);
+  else res.sendFile(exp.out_path, FROM_DB);
 });
 
 app.delete('/api/exports/:id', (req, res) => {
@@ -330,9 +340,10 @@ app.post('/api/music', async (req, res) => {
 });
 
 app.get('/media/music/:file', (req, res) => {
-  const file = path.join(MUSIC_DIR, path.basename(req.params.file));
-  if (!fs.existsSync(file)) return notFound(res);
-  res.sendFile(file);
+  const name = path.basename(req.params.file);
+  if (!fs.existsSync(path.join(MUSIC_DIR, name))) return notFound(res);
+  // relative to `root`: only the name from the URL is checked for dotfiles, not the data folder
+  res.sendFile(name, { root: MUSIC_DIR });
 });
 
 app.delete('/api/music/:file', (req, res) => {

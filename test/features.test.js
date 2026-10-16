@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
@@ -67,7 +68,8 @@ before(async () => {
 
   server = spawn(process.execPath, [path.join(ROOT, 'server/index.js')], {
     env: {
-      ...process.env, PORT: String(PORT), CLIPFORGE_DATA: path.join(TMP, 'data'), CLIPFORGE_CLIPS: CLIPS,
+      ...process.env, PORT: String(PORT), // a hidden folder, like the desktop app's ~/.config/ClipForge
+      CLIPFORGE_DATA: path.join(TMP, '.config', 'data'), CLIPFORGE_CLIPS: CLIPS,
       // share the model cache with the app so Whisper is downloaded only once
       CLIPFORGE_MODELS: path.join(ROOT, 'data', 'models'),
     },
@@ -239,6 +241,9 @@ test('any game: "follow" and "stack" single-clip exports', { timeout: 300_000 },
     const v = info.streams.find((x) => x.codec_type === 'video');
     assert.deepEqual([v.width, v.height], [1080, 1920], format);
     assert.ok(Math.abs(Number(info.format.duration) - 4) < 0.15, `${format} ${info.format.duration}`);
+    const media = await fetch(`${BASE}/media/exports/${e.id}`);
+    assert.equal(media.status, 200, 'served from a hidden data folder');
+    assert.equal((await fetch(`${BASE}/media/exports/${e.id}?download=1`)).status, 200);
   }
 });
 
@@ -248,6 +253,7 @@ test('punchy montage: slow motion, impact, look, progress bar, beat-synced music
   ff('-f', 'lavfi', '-i', "aevalsrc='0.8*sin(2*PI*60*t)*exp(-30*mod(t,0.5))':s=44100:d=6", music);
   const up = await api('/api/music', { method: 'POST', body: fs.readFileSync(music), headers: { 'x-filename': 'kick.wav' } });
   assert.equal(up.status, 200);
+  assert.equal((await fetch(`${BASE}/media/music/${up.body.file}`)).status, 200);
 
   const clip = await clipByName('21-04-33');
   const { body: p } = await post('/api/projects', {
@@ -272,6 +278,15 @@ test('punchy montage: slow motion, impact, look, progress bar, beat-synced music
 test('cross-site requests are refused', async () => {
   assert.equal((await post('/api/scan', {}, { origin: 'http://evil.example' })).status, 403);
   assert.equal((await post('/api/scan', {}, { origin: BASE })).status, 200);
+  // DNS rebinding: a foreign domain resolving to 127.0.0.1 is refused, even same-origin
+  const status = (host) => new Promise((resolve, reject) => {
+    http.request({ host: '127.0.0.1', port: PORT, path: '/api/settings', headers: { host } }, (r) => {
+      r.resume();
+      resolve(r.statusCode);
+    }).on('error', reject).end();
+  });
+  assert.equal(await status(`attaquant.example:${PORT}`), 421);
+  assert.equal(await status(`localhost:${PORT}`), 200);
 });
 
 test('phone access: off by default, key required, PC-only settings', async (t) => {

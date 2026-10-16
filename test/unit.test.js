@@ -351,3 +351,16 @@ test('best-of shaping: impacts on peaks, crescendo order, slow-motion replay of 
   assert.deepEqual(segs.at(-1), { clipId: 2, start: 4.5, end: 6.8, speed: 0.5, impact: 6 });
   assert.deepEqual(shapeBestOf(picks).map((s) => s.clipId), [1, 2, 3, 4], 'chrono by default, no replay');
 });
+
+// ---- DNS rebinding -----------------------------------------------------------------------
+
+import { hostName, knownHost } from '../server/remote.js';
+
+test('only our own host names are served (DNS rebinding)', () => {
+  assert.equal(hostName('localhost:4317'), 'localhost');
+  assert.equal(hostName('[::1]:4317'), '[::1]');
+  for (const h of ['localhost:4317', '127.0.0.1:4317', '[::1]:4317', 'LOCALHOST']) assert.ok(knownHost(h), h);
+  for (const h of ['attaquant.example:4317', 'localhost.attaquant.example', '127.0.0.1.nip.io', '', undefined]) {
+    assert.ok(!knownHost(h), String(h));
+  }
+});

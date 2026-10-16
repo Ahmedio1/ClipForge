@@ -409,6 +409,8 @@ input[type=range] { accent-color: var(--accent); width: 100%; }
 .canvas-progress { position: absolute; left: 0; bottom: 0; height: .7%; min-height: 3px; width: 0; background: #ffd23f; display: none; }
 .canvas.with-progress .canvas-progress { display: block; }
 .seq-item { position: relative; }
+/* big libraries: cards off screen aren't laid out or painted until scrolled to */
+.grid > .card { content-visibility: auto; contain-intrinsic-size: auto 260px; }
 .seq-item .seq-fx { position: absolute; top: 4px; right: 4px; font-size: 11px; background: rgba(0,0,0,.7); border-radius: 4px; padding: 1px 4px; }
 
 /* ================================================================ cloud sources & AI */

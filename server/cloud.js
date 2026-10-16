@@ -241,6 +241,8 @@ function localRel(src, p) {
 export async function browse(id, sub = '') {
   const src = getSource.get(id);
   if (!src) throw new Error('Source inconnue');
+  // a "local folder" source must not list the rest of the disk
+  if (sub.split(/[\\/]/).includes('..')) throw new Error('Chemin invalide');
   await ensureRclone();
   const { code, stdout, stderr } = await rclone(['lsjson', remotePath(src, sub), '--max-depth', '1']);
   if (code !== 0) throw new Error(stderr.trim().split('\n').at(-1) || 'Lecture impossible');

@@ -32,8 +32,31 @@ const safeEqual = (a, b) => {
   return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
 };
 
+const LOCAL_NAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
+
+/** The host name of a Host header ("localhost:4317" → "localhost", "[::1]:4317" → "[::1]"). */
+export function hostName(header) {
+  try {
+    return new URL(`http://${header}`).hostname;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Only our own names are served. Without this, a website could point its domain at 127.0.0.1
+ * (DNS rebinding): the browser would then treat the API as same-origin and drive it freely.
+ */
+export function knownHost(header) {
+  const name = hostName(header);
+  if (!name) return false;
+  if (LOCAL_NAMES.has(name)) return true;
+  return !!getConfig().remote?.enabled && lanAddresses().includes(name);
+}
+
 /** Express middleware: gatekeeps non-local requests and blocks cross-site writes. */
 export function guard(req, res, next) {
+  if (!knownHost(req.headers.host)) return res.status(421).send('Hôte inconnu');
   // Another website open in the browser must not be able to drive the API (CSRF).
   const origin = req.headers.origin;
   if (origin && req.method !== 'GET' && req.method !== 'HEAD') {
