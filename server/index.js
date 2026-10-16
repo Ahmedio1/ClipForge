@@ -221,6 +221,7 @@ app.post('/api/projects', (req, res) => {
     const clip = getClip.get(clipId);
     if (clip) data.segments.push(...sanitizeProjectData({ segments: [{ clipId, start: 0, end: clip.duration }] }).segments);
   }
+  data.pool = [...new Set([...data.pool, ...data.segments.map((s) => s.clipId)])];
   const name = String(req.body.name || '').trim() || `Montage du ${new Date().toLocaleDateString('fr-FR')}`;
   const id = Number(db.prepare('INSERT INTO projects (name, data) VALUES (?, ?)')
     .run(name.slice(0, 120), JSON.stringify(data)).lastInsertRowid);
@@ -231,7 +232,10 @@ function projectDetail(id) {
   const row = getProject.get(id);
   if (!row) return null;
   const data = sanitizeProjectData(JSON.parse(row.data));
-  return { ...projectSummary(row), data, clips: Object.fromEntries(clipsFor(data)), canUndo: !!row.prev_data };
+  // the selected videos too, even those not (or no longer) in the timeline
+  const ids = [...new Set([...data.pool, ...data.segments.map((x) => x.clipId)])];
+  const clips = ids.map((id) => getClip.get(id)).filter(Boolean);
+  return { ...projectSummary(row), data, clips: Object.fromEntries(clips.map((c) => [c.id, c])), canUndo: !!row.prev_data };
 }
 
 app.get('/api/projects/:id', (req, res) => {
@@ -257,6 +261,7 @@ app.post('/api/projects/:id/segments', (req, res) => {
   const start = Math.max(0, Number(req.body.start) || 0);
   const end = Math.min(clip.duration, Number(req.body.end) || clip.duration);
   data.segments.push(...sanitizeProjectData({ segments: [{ clipId: clip.id, start, end }] }).segments);
+  data.pool = [...new Set([...data.pool, clip.id])];
   db.prepare(`UPDATE projects SET data = ?, updated_at = datetime('now') WHERE id = ?`)
     .run(JSON.stringify(data), row.id);
   res.json(projectDetail(row.id));
@@ -448,7 +453,7 @@ app.post('/api/projects/auto', (req, res) => {
       picks.splice(picks.indexOf(weakest), 1);
       total -= weakest.end - weakest.start;
     }
-    let data = sanitizeProjectData({ segments: picks });
+    let data = sanitizeProjectData({ segments: picks, pool: clips.map((c) => c.id) });
     const tpl = req.body.templateId && db.prepare('SELECT * FROM templates WHERE id = ?').get(req.body.templateId);
     if (tpl) data = applyTemplate(data, JSON.parse(tpl.data));
     const name = `Best-of auto du ${new Date().toLocaleDateString('fr-FR')}`;
@@ -480,7 +485,10 @@ async function aiBestOf(clips, maxDuration, templateId, update) {
   }
   if (!chosen.length) throw new Error('L’IA n’a retenu aucun moment');
   chosen.sort((a, b) => a.clip.recorded_at.localeCompare(b.clip.recorded_at) || a.start - b.start);
-  let data = sanitizeProjectData({ segments: chosen.map((c) => ({ clipId: c.clip.id, start: c.start, end: c.end })) });
+  let data = sanitizeProjectData({
+    segments: chosen.map((c) => ({ clipId: c.clip.id, start: c.start, end: c.end })),
+    pool: clips.map((c) => c.id),
+  });
   const tpl = templateId && db.prepare('SELECT * FROM templates WHERE id = ?').get(templateId);
   if (tpl) data = applyTemplate(data, JSON.parse(tpl.data));
   const name = `Best-of IA du ${new Date().toLocaleDateString('fr-FR')}`;
@@ -642,8 +650,21 @@ app.post('/api/cloud/sources/:id/sync', (req, res) => {
 });
 
 app.delete('/api/cloud/sources/:id', localOnly, async (req, res) => {
-  await cloud.deleteSource(Number(req.params.id));
-  res.json({ ok: true });
+  try {
+    res.json(await cloud.deleteSource(Number(req.params.id), { deleteVideos: req.query.videos === '1' }));
+  } catch (err) {
+    res.status(409).json({ error: err.message });
+  }
+});
+
+app.post('/api/cloud/sources/:id/import', (req, res) => {
+  const paths = Array.isArray(req.body.paths) ? req.body.paths : [];
+  res.json(startJob('cloud-import', async (update) => {
+    update({ message: 'Import…' });
+    const out = await cloud.importVideos(Number(req.params.id), paths);
+    scan();
+    return out;
+  }));
 });
 
 
@@ -746,10 +767,10 @@ app.post('/api/ai/director', (req, res) => {
   if (!instruction) return res.status(400).json({ error: 'Écris ce que tu veux' });
   res.json(startJob('ai-director', async (update) => {
     const data = sanitizeProjectData(JSON.parse(row.data));
-    // the clips already used, plus the 40 most recent ones, with their highlights
-    const used = new Set(data.segments.map((s) => s.clipId));
-    const recent = db.prepare('SELECT * FROM clips WHERE missing = 0 ORDER BY recorded_at DESC LIMIT 40').all();
-    const catalog = [...new Map([...[...used].map((id) => getClip.get(id)).filter(Boolean), ...recent].map((c) => [c.id, c])).values()];
+    // only the videos selected for this montage (and any already in it)
+    const ids = new Set([...data.pool, ...data.segments.map((s) => s.clipId)]);
+    const catalog = [...ids].map((id) => getClip.get(id)).filter((c) => c && !c.missing);
+    if (!catalog.length) throw new Error('Sélectionne d’abord les vidéos du montage (bouton ＋ Ajouter)');
     for (const [i, clip] of catalog.entries()) {
       update({ progress: (i / catalog.length) * 0.4, message: `Préparation des clips (${i + 1}/${catalog.length})…` });
       clip.highlights = (await clipAnalysis(clip).catch(() => ({ highlights: [] }))).highlights;

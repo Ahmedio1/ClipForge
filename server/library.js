@@ -43,6 +43,26 @@ const updateProbe = db.prepare(`
 
 export const state = { scanning: false, version: 0, lastScan: null, lastError: null };
 
+/** Removes from the library (rows + thumbnails) every clip stored under `dir`. Files are untouched. */
+export function forgetClipsUnder(dir) {
+  const prefix = path.resolve(dir) + path.sep;
+  const rows = db.prepare('SELECT id, path FROM clips').all().filter((r) => r.path.startsWith(prefix));
+  const del = db.prepare('DELETE FROM clips WHERE id = ?');
+  for (const r of rows) {
+    del.run(r.id);
+    fs.rmSync(thumbPath(r.id), { force: true });
+  }
+  if (rows.length) state.version++;
+  return rows.length;
+}
+
+/** Number and total size of the library clips stored under `dir`. */
+export function clipsUnder(dir) {
+  const prefix = path.resolve(dir) + path.sep;
+  const rows = db.prepare('SELECT path, size FROM clips WHERE missing = 0').all().filter((r) => r.path.startsWith(prefix));
+  return { count: rows.length, bytes: rows.reduce((t, r) => t + r.size, 0) };
+}
+
 async function addOrRefresh(file, clipsDir) {
   const stat = fs.statSync(file);
   // Game Bar / OBS may still be writing this file; the next scan will pick it up.

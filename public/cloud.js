@@ -1,4 +1,4 @@
-import { $, api, esc, fmtDateTime, toast } from './util.js';
+import { $, api, esc, fmtDateTime, fmtSize, toast, waitJob } from './util.js';
 
 const ICONS = { onedrive: '☁', drive: '△', dropbox: '◇', iclouddrive: '', mega: 'M', smb: '🖧', local: '📁' };
 let info = { providers: {}, sources: [] };
@@ -10,8 +10,8 @@ export async function renderCloud(main, isCurrent = () => true) {
   main.innerHTML = `
     <div class="page-head"><h1>Sources cloud</h1><span class="spacer"></span>
       <button class="btn primary" id="cloud-new">＋ Ajouter une source</button></div>
-    <p class="muted page-intro">ClipForge récupère automatiquement les nouvelles vidéos de tes comptes et de ton NAS,
-      et les range dans ta bibliothèque. Les fichiers sont copiés, jamais supprimés ni modifiés chez le service.</p>
+    <p class="muted page-intro">Choisis les vidéos à importer depuis tes comptes et ton NAS, ou active l’import automatique
+      d’un dossier. Les vidéos sont copiées sur ce PC ; retirer une source supprime ces copies, jamais les originaux chez le service.</p>
     ${info.sources.length ? `<div class="sources">${info.sources.map(sourceCard).join('')}</div>`
       : '<div class="empty"><h2>Aucune source</h2>OneDrive, Google Drive, Dropbox, iCloud, Mega, NAS… clique sur « Ajouter une source ».</div>'}`;
   clearTimeout(pollTimer);
@@ -28,25 +28,27 @@ function sourceCard(s) {
       <div class="progress"><div style="width:${Math.round(s.syncing.progress * 100)}%"></div></div>`;
   } else if (s.status === 'setup') status = '<span class="status-warn">Connexion inachevée</span>';
   else if (s.status === 'error' || s.last_error) status = `<span class="status-failed">⚠ ${esc(s.last_error || 'Erreur')}</span>`;
-  else if (s.last_sync) status = `<span class="muted">Dernière synchro ${fmtDateTime(`${s.last_sync}Z`)} · ${s.last_count ?? 0} nouvelle(s) vidéo(s)</span>`;
-  else status = '<span class="muted">Pas encore synchronisée</span>';
+  else if (s.last_sync) status = `<span class="muted">Dernier import ${fmtDateTime(`${s.last_sync}Z`)} · ${s.last_count ?? 0} nouvelle(s) vidéo(s)</span>`;
+  else status = '<span class="muted">Rien d’importé pour l’instant</span>';
+  const auto = s.interval_min > 0;
   const folder = s.type === 'local' ? s.folder : s.folder ? `/${s.folder}` : 'Tout le compte';
   return `
     <article class="source" data-source="${s.id}">
       <div class="source-icon">${ICONS[s.type] || '☁'}</div>
       <div class="source-main">
         <b>${esc(s.name)}</b> <span class="muted small">${esc(p?.label || s.type)}</span>
-        <div class="small">Dossier surveillé : <code>${esc(folder)}</code></div>
+        <div class="small">Dossier suivi : <code>${esc(folder)}</code> · <b>${s.local.count}</b> vidéo(s) importée(s) (${fmtSize(s.local.bytes)})</div>
         <div class="small">${status}</div>
         <div class="source-opts small">
-          <label>Vidéos de moins de <input type="number" min="0" max="3650" data-opt="max_age_days" value="${s.max_age_days}"> jours (0 = toutes)</label>
-          <label>Vérifier toutes les <input type="number" min="0" max="1440" data-opt="interval_min" value="${s.interval_min}"> min (0 = manuel)</label>
+          <label class="check"><input type="checkbox" data-auto ${auto ? 'checked' : ''}> Importer automatiquement les nouvelles vidéos du dossier suivi</label>
+          ${auto ? `<label>toutes les <input type="number" min="1" max="1440" data-opt="interval_min" value="${s.interval_min}"> min</label>
+          <label>si elles ont moins de <input type="number" min="0" max="3650" data-opt="max_age_days" value="${s.max_age_days}"> jours (0 = toutes)</label>` : ''}
         </div>
       </div>
       <div class="actions">
-        ${s.status === 'ready' ? `<button class="btn primary" data-sync ${s.syncing ? 'disabled' : ''}>Synchroniser</button>` : ''}
-        ${s.status === 'ready' && s.type !== 'local' ? '<button class="btn" data-browse>Dossier…</button>' : ''}
-        <button class="btn danger" data-del-source title="Retirer la source (les vidéos déjà copiées restent)">🗑</button>
+        ${s.status === 'ready' ? `<button class="btn primary" data-browse ${s.syncing ? 'disabled' : ''}>Choisir des vidéos…</button>` : ''}
+        ${s.status === 'ready' ? `<button class="btn" data-sync ${s.syncing ? 'disabled' : ''} title="Importe toutes les vidéos du dossier suivi">Tout importer</button>` : ''}
+        <button class="btn danger" data-del-source title="Retirer la source et supprimer ses vidéos importées">🗑</button>
       </div>
     </article>`;
 }
@@ -63,15 +65,31 @@ document.addEventListener('click', async (e) => {
   } else if (e.target.closest('[data-browse]')) {
     openBrowser(id);
   } else if (e.target.closest('[data-del-source]')) {
-    if (!confirm('Retirer cette source ? Les vidéos déjà copiées restent dans ta bibliothèque.')) return;
-    await api(`/api/cloud/sources/${id}`, { method: 'DELETE' });
+    const s = info.sources.find((x) => x.id === id);
+    const what = s.local.count
+      ? `\n\nSes ${s.local.count} vidéo(s) importée(s) (${fmtSize(s.local.bytes)}) seront supprimées de ce PC et de ta bibliothèque.`
+      : '';
+    if (!confirm(`Retirer « ${s.name} » ?${what}\n\nRien n’est supprimé sur le service cloud lui-même.`)) return;
+    try {
+      const r = await api(`/api/cloud/sources/${id}?videos=1`, { method: 'DELETE' });
+      toast(r.deleted ? `Source retirée, ${r.deleted} vidéo(s) supprimée(s)` : 'Source retirée');
+    } catch (err) {
+      toast(err.message, true);
+    }
     renderCloud($('#main'));
   }
 });
 
 document.addEventListener('change', async (e) => {
-  const opt = e.target.closest('[data-opt]');
   const card = e.target.closest('[data-source]');
+  if (card && e.target.matches('[data-auto]')) {
+    await api(`/api/cloud/sources/${card.dataset.source}`, {
+      method: 'PUT', body: JSON.stringify({ interval_min: e.target.checked ? 15 : 0 }),
+    });
+    toast(e.target.checked ? 'Import automatique activé (toutes les 15 min)' : 'Import automatique désactivé');
+    return renderCloud($('#main'));
+  }
+  const opt = e.target.closest('[data-opt]');
   if (!opt || !card) return;
   await api(`/api/cloud/sources/${card.dataset.source}`, {
     method: 'PUT', body: JSON.stringify({ [opt.dataset.opt]: Number(opt.value) }),
@@ -166,7 +184,7 @@ async function followSetup(id) {
         toast('Source connectée ✔');
         $('#cloud-add').close();
         const src = (await api('/api/cloud')).sources.find((x) => x.id === id);
-        if (src?.type !== 'local') openBrowser(id);
+        if (src) openBrowser(id);
         renderCloud($('#main'));
         return;
       } else if (s.phase === 'error') {
@@ -202,29 +220,59 @@ function renderQuestion(id, q) {
   };
 }
 
-// ---------------------------------------------------------------- folder browser
+// ---------------------------------------------------------------- video picker
 
-const browser = { id: null, path: '' };
+const browser = { id: null, path: '', videos: [] };
 
 async function openBrowser(id, sub = '') {
   browser.id = id;
   browser.path = sub;
   if (!$('#cloud-browse').open) $('#cloud-browse').showModal();
   $('#cb-list').innerHTML = '<div class="setup-wait"><span class="spinner"></span> Lecture…</div>';
+  $('#cb-import').disabled = true;
   const parts = sub ? sub.split('/') : [];
   $('#cb-path').innerHTML = [`<button data-crumb="">Racine</button>`,
     ...parts.map((p, i) => `<button data-crumb="${esc(parts.slice(0, i + 1).join('/'))}">${esc(p)}</button>`)].join(' / ');
   try {
     const tree = await api(`/api/cloud/sources/${id}/browse?path=${encodeURIComponent(sub)}`);
-    $('#cb-list').innerHTML = tree.folders.map((f) => `
-      <button class="folder" data-folder="${esc(f.path)}">📁 ${esc(f.name)}</button>`).join('')
-      || '<p class="muted">Pas de sous-dossier.</p>';
-    $('#cb-count').textContent = `${tree.videos} vidéo(s) directement dans ce dossier`;
+    browser.videos = tree.videos;
+    const fresh = tree.videos.filter((v) => !v.imported).length;
+    $('#cb-list').innerHTML = `
+      ${tree.folders.map((f) => `<button class="folder" data-folder="${esc(f.path)}">📁 ${esc(f.name)}</button>`).join('')}
+      ${tree.videos.length ? `
+        <label class="check pick-all"><input type="checkbox" data-pick-all ${fresh ? '' : 'disabled'}> Tout cocher (${fresh} non importée(s))</label>
+        ${tree.videos.map((v, i) => `
+          <label class="video-row ${v.imported ? 'imported' : ''}">
+            <input type="checkbox" data-pick-video="${i}" ${v.imported ? 'disabled' : ''}>
+            <span class="vname">🎞 ${esc(v.name)}</span>
+            <span class="muted small">${fmtSize(v.size)} · ${fmtDateTime(v.modTime)}</span>
+            ${v.imported ? '<span class="ok small">✓ déjà importée</span>' : ''}
+          </label>`).join('')}` : ''}
+      ${!tree.folders.length && !tree.videos.length ? '<p class="muted">Dossier vide.</p>' : ''}`;
+    updatePickCount();
   } catch (err) {
     $('#cb-list').innerHTML = `<p class="status-failed">⚠ ${esc(err.message)}</p>`;
   }
 }
 
+function picked() {
+  return [...document.querySelectorAll('[data-pick-video]:checked')].map((el) => browser.videos[Number(el.dataset.pickVideo)]);
+}
+
+function updatePickCount() {
+  const sel = picked();
+  const bytes = sel.reduce((t, v) => t + v.size, 0);
+  $('#cb-count').textContent = sel.length ? `${sel.length} vidéo(s) cochée(s) · ${fmtSize(bytes)}` : 'Coche les vidéos à importer';
+  $('#cb-import').disabled = !sel.length;
+  $('#cb-import').textContent = sel.length ? `Importer ${sel.length} vidéo(s)` : 'Importer la sélection';
+}
+
+$('#cb-list').addEventListener('change', (e) => {
+  if (e.target.matches('[data-pick-all]')) {
+    document.querySelectorAll('[data-pick-video]:not(:disabled)').forEach((el) => { el.checked = e.target.checked; });
+  }
+  updatePickCount();
+});
 $('#cb-path').addEventListener('click', (e) => {
   const c = e.target.closest('[data-crumb]');
   if (c) openBrowser(browser.id, c.dataset.crumb);
@@ -233,11 +281,30 @@ $('#cb-list').addEventListener('click', (e) => {
   const f = e.target.closest('[data-folder]');
   if (f) openBrowser(browser.id, f.dataset.folder);
 });
+
+$('#cb-import').addEventListener('click', async () => {
+  const sel = picked();
+  const btn = $('#cb-import');
+  btn.disabled = true;
+  try {
+    const job = await api(`/api/cloud/sources/${browser.id}/import`, {
+      method: 'POST', body: JSON.stringify({ paths: sel.map((v) => v.path) }),
+    });
+    const r = await waitJob(job, () => { btn.textContent = 'Import en cours…'; });
+    toast(`${r.imported} vidéo(s) importée(s)${r.errors.length ? `, ${r.errors.length} en échec` : ''}`, !!r.errors.length);
+    openBrowser(browser.id, browser.path);
+    renderCloud($('#main'));
+  } catch (err) {
+    toast(err.message, true);
+    updatePickCount();
+  }
+});
+
 $('#cb-choose').addEventListener('click', async () => {
+  const src = info.sources.find((x) => x.id === browser.id);
+  if (src?.type === 'local') return toast('Pour un dossier de ce PC, le dossier suivi est celui choisi à l’ajout', true);
   await api(`/api/cloud/sources/${browser.id}`, { method: 'PUT', body: JSON.stringify({ folder: browser.path }) });
-  $('#cloud-browse').close();
-  await api(`/api/cloud/sources/${browser.id}/sync`, { method: 'POST' });
-  toast('Dossier enregistré, synchronisation lancée');
-  setTimeout(() => renderCloud($('#main')), 400);
+  toast(`Dossier suivi : /${browser.path || ''}`);
+  renderCloud($('#main'));
 });
 $('[data-close-cloud-browse]').addEventListener('click', () => $('#cloud-browse').close());

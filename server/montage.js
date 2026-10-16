@@ -23,6 +23,7 @@ export function defaultProjectData() {
     gameVolume: 1,
     segments: [],
     texts: [],
+    pool: [],
     music: null, // { file, volume }
   };
 }
@@ -64,6 +65,8 @@ export function sanitizeProjectData(input = {}) {
         box: t.box !== undefined ? !!t.box : true,
         auto: !!t.auto, // generated subtitle, replaced on regeneration
       })),
+    // the videos the user picked for this montage: the AI assistant works with these only
+    pool: [...new Set((Array.isArray(input.pool) ? input.pool : []).map(Number).filter(Number.isInteger))],
     music: input.music?.file
       ? { file: String(input.music.file), volume: num(input.music.volume, 0, 2, 0.5) }
       : null,

@@ -50,7 +50,7 @@ function fakeAnswer(schema, prompt) {
   if (req.includes('keep')) return { keep: [2, 1], reject: [3] };
   if (req.includes('ok')) return { ok: true, message: 'Salut champion' };
   if (req.includes('explanation')) {
-    const clips = JSON.parse(prompt.split('Clips disponibles :\n')[1].split('\nDemande :')[0]);
+    const clips = JSON.parse(prompt.match(/Vidéos sélectionnées pour ce montage \(\d+\) :\n(.*)\nDemande :/s)[1]);
     return {
       explanation: 'J’ai gardé le meilleur moment et ajouté un titre.',
       format: 'vertical', fit: 'fight', fps: 60, transition: 'none', transitionDuration: 0.3,
@@ -217,9 +217,15 @@ test('montage assistant edits the project, ignores unknown clips, and can be und
   const { body: project } = await post('/api/projects', { clipIds: [clips[1].id], data: { fit: 'blur' } });
   const result = await waitJob((await post('/api/ai/director', { projectId: project.id, instruction: 'Fais un short de combat avec un titre' })).body);
   assert.match(result.explanation, /meilleur moment/);
+  // the library has 2 clips but only the selected one may reach the AI
+  const prompt = claudeCalls.at(-1).body.messages[0].content.find((b) => b.type === 'text').text;
+  const sent = JSON.parse(prompt.match(/Vidéos sélectionnées pour ce montage \(1\) :\n(.*)\nDemande :/s)[1]);
+  assert.deepEqual(sent.map((c) => c.id), [clips[1].id]);
+  assert.match(claudeCalls.at(-1).body.system, /UNIQUEMENT/);
   const { body: edited } = await api(`/api/projects/${project.id}`);
   assert.equal(edited.data.fit, 'fight');
   assert.equal(edited.data.segments.length, 1, 'made-up clip id 99999 dropped');
+  assert.deepEqual(edited.data.pool, [clips[1].id], 'selection kept');
   assert.deepEqual([edited.data.segments[0].start, edited.data.segments[0].end], [1, 4]);
   assert.equal(edited.data.texts[0].text, 'TOP 1');
   assert.equal(edited.canUndo, true);

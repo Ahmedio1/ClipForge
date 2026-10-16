@@ -331,6 +331,7 @@
   <dialog id="assistant" class="dialog wide">
     <div class="pub-head"><h2>✨ Assistant de montage</h2><button class="btn ghost" data-close-assistant>✕</button></div>
     <p class="muted small">Dis ce que tu veux, l’IA modifie le montage. Tu peux toujours annuler.</p>
+    <div id="as-pool" class="as-pool"></div>
     <textarea id="as-input" rows="3" placeholder="ex. Fais un short de 30 s max avec mes meilleurs combos, mise en page combat, et un titre qui claque"></textarea>
     <div class="as-examples">
       <button class="chip" data-example="Garde seulement les 3 moments les plus intenses, 25 secondes max">3 meilleurs moments</button>
@@ -351,12 +352,13 @@
   </dialog>
 
   <dialog id="cloud-browse" class="dialog wide">
-    <div class="pub-head"><h2>Choisir le dossier à surveiller</h2><button class="btn ghost" data-close-cloud-browse>✕</button></div>
+    <div class="pub-head"><h2>Choisir les vidéos à importer</h2><button class="btn ghost" data-close-cloud-browse>✕</button></div>
     <div id="cb-path" class="crumbs"></div>
     <div id="cb-list" class="folder-list"></div>
     <div class="dialog-actions">
       <span id="cb-count" class="muted small"></span>
-      <button id="cb-choose" class="btn primary">Surveiller ce dossier</button>
+      <button id="cb-choose" class="btn ghost" title="Pour « Importer tout le dossier » et l’import automatique">Définir comme dossier suivi</button>
+      <button id="cb-import" class="btn primary" disabled>Importer la sélection</button>
     </div>
   </dialog>
 
@@ -379,6 +381,7 @@
     <span id="selbar-count"></span>
     <button id="selbar-ai" class="btn primary" title="L’IA regarde les moments forts et garde les plus spectaculaires" hidden>✨ Best-of IA</button>
     <button id="selbar-auto" class="btn primary" title="Garde automatiquement le meilleur moment de chaque clip">✨ Best-of auto</button>
+    <button id="selbar-assistant" class="btn" hidden>✨ Assistant IA</button>
     <button id="selbar-create" class="btn">Créer un montage</button>
     <button id="selbar-clear" class="btn ghost">Annuler</button>
   </div>

@@ -422,12 +422,30 @@ $('#mt-hook-list').addEventListener('click', (e) => {
   toast('Accroche ajoutée');
 });
 
-$('#mt-assistant').addEventListener('click', () => {
+export function openAssistant() {
   $('#as-result').hidden = true;
   $('#as-undo').hidden = !mt.project.canUndo;
+  renderPool();
   $('#assistant').showModal();
   $('#as-input').focus();
-});
+}
+
+/** The videos the assistant is allowed to use: the ones selected for this montage. */
+function renderPool() {
+  const d = mt.project.data;
+  const ids = [...new Set([...d.pool, ...d.segments.map((s) => s.clipId)])];
+  const clips = ids.map((id) => mt.project.clips[id]).filter(Boolean);
+  $('#as-pool').innerHTML = clips.length
+    ? `<div class="small">L’IA travaille uniquement avec ${clips.length === 1 ? 'cette vidéo' : `ces ${clips.length} vidéos`} :</div>
+       <div class="pool-list">${clips.map((c) => `
+         <span class="pool-item"><span class="pool-thumb" style="background-image:url(/media/thumbs/${c.id})"></span>${esc(c.title || c.game)}
+           <em>${fmtTime(c.duration, false)}</em></span>`).join('')}</div>
+       <div class="small muted">Pour en changer : ferme, puis « ＋ Ajouter » dans la séquence.</div>`
+    : '<div class="status-warn small">Aucune vidéo sélectionnée : ajoute d’abord des clips avec « ＋ Ajouter ».</div>';
+  $('#as-run').disabled = !clips.length;
+}
+
+$('#mt-assistant').addEventListener('click', openAssistant);
 $('[data-close-assistant]').addEventListener('click', () => $('#assistant').close());
 $('#assistant').addEventListener('click', (e) => {
   const ex = e.target.closest('[data-example]');
@@ -810,6 +828,7 @@ $('#mt-picker-grid').addEventListener('click', (e) => {
   const seg = { id: newId(), clipId: clip.id, start: 0, end: clip.duration };
   mt.project.data.segments.push(seg);
   mt.project.clips[clip.id] = clip;
+  if (!mt.project.data.pool.includes(clip.id)) mt.project.data.pool.push(clip.id);
   mt.selected = seg.id;
   changed();
   renderSegInspector();

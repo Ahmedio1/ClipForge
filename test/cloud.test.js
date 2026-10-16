@@ -127,34 +127,67 @@ with zipfile.ZipFile(${JSON.stringify(zipPath)}, 'w') as z:
   assert.throws(() => zipEntries(Buffer.from('pas un zip du tout, vraiment pas')), /ZIP invalide/);
 });
 
-t('a NAS folder source: browse, then sync recent videos only', async () => {
+t('a NAS folder source: pick videos to import, import all, rename, delete with its videos', async () => {
   const { body: src } = await post('/api/cloud/sources', { name: 'Mon NAS', type: 'local', params: { path: NAS } });
   assert.equal(src.status, 'ready');
+  assert.equal(src.interval_min, 0, 'manual choice by default, no automatic import');
 
-  const { body: tree } = await api(`/api/cloud/sources/${src.id}/browse`);
-  assert.deepEqual(tree.folders.map((f) => f.name), ['Street Fighter 6']);
-  assert.equal(tree.videos, 2);
+  const { body: root } = await api(`/api/cloud/sources/${src.id}/browse`);
+  assert.deepEqual(root.folders.map((f) => f.name), ['Street Fighter 6']);
+  assert.equal(root.videos.length, 2);
+  assert.ok(root.videos.every((v) => v.imported === false && v.size > 0 && v.modTime));
+  const { body: sub } = await api(`/api/cloud/sources/${src.id}/browse?path=${encodeURIComponent('Street Fighter 6')}`);
+  assert.deepEqual(sub.videos.map((v) => v.path), ['Street Fighter 6/combo.mp4']);
 
+  // import only the chosen video
+  const { body: job } = await post(`/api/cloud/sources/${src.id}/import`, { paths: ['Street Fighter 6/combo.mp4', '../escape.mp4'] });
+  const res = await waitFor(async () => {
+    const { body } = await api(`/api/jobs/${job.id}`);
+    if (body.status === 'failed') throw new Error(body.error);
+    return body.status === 'done' && body.result;
+  }, 'import job');
+  assert.equal(res.imported, 1, 'path escaping the source is ignored');
+  const only = await waitFor(async () => {
+    const { body } = await api('/api/clips');
+    return body.length === 1 && body;
+  }, 'one imported clip');
+  assert.equal(only[0].game, 'Street Fighter 6');
+  assert.ok(!fs.existsSync(path.join(CLIPS, 'Cloud', 'Mon NAS', 'TEKKEN™8 2026-10-01 20-00-00.mp4')), 'not chosen: not copied');
+  const { body: again } = await api(`/api/cloud/sources/${src.id}/browse?path=${encodeURIComponent('Street Fighter 6')}`);
+  assert.equal(again.videos[0].imported, true);
+
+  // "import everything" still exists, with the 30-day filter
   await post(`/api/cloud/sources/${src.id}/sync`);
   const clips = await waitFor(async () => {
     const { body } = await api('/api/clips');
-    return body.length >= 2 && body;
+    return body.length === 2 && body;
   }, 'synced clips');
-  const games = clips.map((c) => c.game).sort();
-  assert.deepEqual(games, ['Street Fighter 6', 'TEKKEN™8'], 'named from the file, or the folder below the source');
+  assert.deepEqual(clips.map((c) => c.game).sort(), ['Street Fighter 6', 'TEKKEN™8']);
   assert.ok(!clips.some((c) => c.filename === 'vieux clip.mp4'), 'older than 30 days: skipped');
-  assert.ok(fs.existsSync(path.join(CLIPS, 'Cloud', 'Mon NAS', 'Street Fighter 6', 'combo.mp4')));
   assert.ok(!fs.existsSync(path.join(CLIPS, 'Cloud', 'Mon NAS', 'notes.txt')));
 
+  // renaming keeps the same local folder
+  await api(`/api/cloud/sources/${src.id}`, { method: 'PUT', body: JSON.stringify({ name: 'NAS du salon' }) });
   const { body: cloud } = await api('/api/cloud');
   const s = cloud.sources.find((x) => x.id === src.id);
-  assert.equal(s.last_count, 2);
-  assert.equal(s.last_error, null);
+  assert.equal(s.dest, path.join(CLIPS, 'Cloud', 'Mon NAS'));
+  assert.equal(s.local.count, 2);
 
-  // with no age limit, the old clip comes too
-  await api(`/api/cloud/sources/${src.id}`, { method: 'PUT', body: JSON.stringify({ max_age_days: 0 }) });
-  await post(`/api/cloud/sources/${src.id}/sync`);
-  await waitFor(async () => (await api('/api/clips')).body.some((c) => c.filename === 'vieux clip.mp4'), 'old clip');
+  // removing the source deletes its imported copies, never the originals
+  const { body: del } = await api(`/api/cloud/sources/${src.id}?videos=1`, { method: 'DELETE' });
+  assert.equal(del.deleted, 2);
+  assert.ok(!fs.existsSync(path.join(CLIPS, 'Cloud', 'Mon NAS')));
+  assert.equal((await api('/api/clips')).body.length, 0);
+  assert.ok(fs.existsSync(path.join(NAS, 'Street Fighter 6', 'combo.mp4')), 'original on the NAS untouched');
+  assert.ok(fs.existsSync(path.join(NAS, 'TEKKEN™8 2026-10-01 20-00-00.mp4')));
+});
+
+t('removing a source without ?videos=1 keeps its videos', async () => {
+  const { body: src } = await post('/api/cloud/sources', { name: 'Garde', type: 'local', params: { path: NAS } });
+  const { body: job } = await post(`/api/cloud/sources/${src.id}/import`, { paths: ['TEKKEN™8 2026-10-01 20-00-00.mp4'] });
+  await waitFor(async () => (await api(`/api/jobs/${job.id}`)).body.status === 'done', 'import');
+  await api(`/api/cloud/sources/${src.id}`, { method: 'DELETE' });
+  assert.ok(fs.existsSync(path.join(CLIPS, 'Cloud', 'Garde', 'TEKKEN™8 2026-10-01 20-00-00.mp4')));
 });
 
 t('missing folder and missing fields are refused', async () => {

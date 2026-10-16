@@ -1,5 +1,5 @@
 import { $, $$, api, esc, fitBox, fmtDateTime, fmtDay, fmtSize, fmtTime, toast, uploadFile, waitJob } from './util.js';
-import { openProject, renderProjects, addToProjectMenu } from './montage.js';
+import { openAssistant, openProject, renderProjects, addToProjectMenu } from './montage.js';
 import { openPublish, renderPublications } from './publish.js';
 import { renderCloud } from './cloud.js';
 import { aiState, loadAi, renderAi } from './ai.js';
@@ -167,6 +167,7 @@ function renderSelectionBar() {
   const n = state.selected.size;
   $('#selbar').hidden = n === 0;
   $('#selbar-ai').hidden = !aiState.active;
+  $('#selbar-assistant').hidden = !aiState.active;
   $('#selbar-count').textContent = `${n} clip${n > 1 ? 's' : ''} sélectionné${n > 1 ? 's' : ''}`;
 }
 
@@ -197,6 +198,15 @@ async function bestOf(btn, useAi) {
     btn.textContent = label;
   }
 }
+
+// a montage of exactly the selected videos, then straight to the AI assistant
+$('#selbar-assistant').addEventListener('click', async () => {
+  const ordered = state.clips.filter((c) => state.selected.has(c.id)).reverse().map((c) => c.id);
+  const project = await api('/api/projects', { method: 'POST', body: JSON.stringify({ clipIds: ordered }) });
+  $('#selbar-clear').click();
+  await openProject(project.id);
+  openAssistant();
+});
 
 $('#selbar-create').addEventListener('click', async () => {
   // keep library order (most recent first reads naturally as a highlight reel when reversed)

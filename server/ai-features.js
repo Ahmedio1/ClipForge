@@ -132,13 +132,14 @@ export async function direct({ project, data, catalog, instruction }) {
   const out = await askJson({
     system: `${SYSTEM}
 Tu modifies un montage décrit en JSON. Règles :
-- segments : extraits de clips de la bibliothèque (clipId existant, 0 ≤ start < end ≤ durée du clip), dans l'ordre de lecture ; privilégie les moments forts fournis.
+- segments : extraits des clips fournis UNIQUEMENT (ce sont les vidéos que l'utilisateur a sélectionnées pour ce montage ; n'invente jamais d'autre clipId), 0 ≤ start < end ≤ durée du clip, dans l'ordre de lecture ; privilégie les moments forts fournis.
+- Sauf si la demande dit le contraire, utilise chacun des clips fournis au moins une fois.
 - textes : start/end en secondes sur la timeline du montage ; position top|center|bottom ; taille S|M|L.
 - format ${Object.keys(CANVAS).join('|')} ; fit ${FITS.join('|')} (fight = jeux de combat) ; transition ${TRANSITIONS.join('|')}.
 - Ne garde que ce que la demande implique de changer ; explique en 1-2 phrases ce que tu as fait.`,
     prompt: [
       `Montage « ${project.name} » actuel :`, JSON.stringify(current),
-      'Clips disponibles :', JSON.stringify(clips),
+      `Vidéos sélectionnées pour ce montage (${clips.length}) :`, JSON.stringify(clips),
       `Demande : ${instruction}`,
     ].join('\n'),
     effort: 'medium',
@@ -186,6 +187,7 @@ Tu modifies un montage décrit en JSON. Règles :
     segments,
     // subtitles are kept as they are; regenerate them if the clips changed
     texts: [...data.texts.filter((t) => t.auto), ...(out.texts || []).map((t) => ({ ...t, box: true }))],
+    pool: data.pool,
   });
   return { data: next, explanation: String(out.explanation || '') };
 }

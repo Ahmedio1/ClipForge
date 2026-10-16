@@ -58,6 +58,7 @@ before(async () => {
   fs.mkdirSync(SHOTS, { recursive: true });
   makeClip(path.join(CLIPS, 'TEKKEN™8 2026-10-01 20-00-00.mp4'));
   makeClip(path.join(NAS, 'Street Fighter 6', 'SF6 2026-10-03 18-00-00.mp4'));
+  makeClip(path.join(NAS, 'Street Fighter 6', 'SF6 2026-10-04 18-00-00.mp4'));
 
   fakeAi = http.createServer(async (req, res) => {
     const chunks = [];
@@ -112,13 +113,33 @@ t('cloud page: add a NAS folder, sync, clips land in the library', { skip: !REAL
   await page.fill('#ca-form input[name="name"]', 'NAS salon');
   await page.fill('#ca-form input[name="path"]', NAS);
   await page.click('#ca-form button.primary');
-  await page.waitForSelector('.source:has-text("NAS salon")');
-  await page.click('.source [data-sync]');
-  await page.waitForSelector('.source:has-text("1 nouvelle(s) vidéo(s)")', { timeout: 30_000 });
+
+  // right after adding, the picker opens: go into the folder, pick ONE of the two videos
+  await page.waitForSelector('#cloud-browse[open] [data-folder]');
+  await page.click('[data-folder="Street Fighter 6"]');
+  await page.waitForSelector('[data-pick-video]');
+  assert.equal(await page.locator('[data-pick-video]').count(), 2);
+  assert.equal(await page.isDisabled('#cb-import'), true);
+  await page.locator('[data-pick-video]').first().check();
+  assert.match(await page.textContent('#cb-import'), /Importer 1 vidéo/);
+  await shot('21-cloud-picker');
+  await page.click('#cb-import');
+  await page.waitForSelector('.video-row.imported', { timeout: 30_000 });
+  await page.click('[data-close-cloud-browse]');
+  await page.waitForSelector('.source:has-text("1 vidéo(s) importée(s)")');
   await shot('21-cloud-sources');
+
   await page.click('[data-nav="all"]');
   await page.waitForFunction(() => document.querySelectorAll('.card').length === 2, null, { timeout: 30_000 });
   await page.waitForSelector('#games .game-name:has-text("SF6")');
+
+  // removing the source deletes its imported video from the library
+  await page.click('[data-nav="cloud"]');
+  await page.click('.source [data-del-source]');
+  await page.waitForSelector('.toast:has-text("1 vidéo(s) supprimée(s)")');
+  await page.click('[data-nav="all"]');
+  await page.waitForFunction(() => document.querySelectorAll('.card').length === 1, null, { timeout: 30_000 });
+  assert.ok(fs.existsSync(path.join(NAS, 'Street Fighter 6', 'SF6 2026-10-03 18-00-00.mp4')), 'original kept');
 });
 
 t('AI page: add a provider, list models, test it', async () => {
@@ -158,7 +179,12 @@ t('montage: AI hooks and the assistant with undo', async () => {
   await page.click('[data-nav="all"]');
   await page.waitForSelector('.card');
   await page.locator('.card').first().click({ modifiers: ['Shift'] });
-  await page.click('#selbar-create');
+  // "Assistant IA" from the selection: a montage of exactly these videos, assistant open
+  await page.click('#selbar-assistant');
+  await page.waitForSelector('#assistant[open] .pool-item');
+  assert.equal(await page.locator('.pool-item').count(), 1);
+  assert.match(await page.textContent('#as-pool'), /uniquement avec cette vidéo/);
+  await page.click('[data-close-assistant]');
   await page.waitForSelector('#montage:not([hidden]) .seq-item');
 
   await page.click('.tab[data-tab="texts"]');

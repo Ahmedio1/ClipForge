@@ -404,10 +404,10 @@ input[type=range] { accent-color: var(--accent); width: 100%; }
 .source-main code { word-break: break-all; }
 .source .actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
 .source-opts { display: flex; gap: 16px; flex-wrap: wrap; color: var(--muted); }
-.source-opts input, .model-row input[type=text] {
+.source-opts input[type=number], .model-row input[type=text] {
   background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; color: var(--text);
 }
-.source-opts input { width: 64px; }
+.source-opts input[type=number] { width: 64px; }
 .model-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .model-row input[type=text] { min-width: 220px; flex: 1; }
 .status-warn { color: #ffc850; }
@@ -455,3 +455,17 @@ input[type=range] { accent-color: var(--accent); width: 100%; }
 .row-between b { white-space: nowrap; }
 .ai-add .dialog-actions { grid-column: 1 / -1; justify-content: flex-start; }
 .subs .select { width: 100%; min-width: 0; }
+
+.video-row { display: grid; grid-template-columns: auto 1fr auto auto; gap: 10px; align-items: center; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--bg); cursor: pointer; }
+.video-row input { accent-color: var(--accent); }
+.video-row:has(input:checked) { border-color: var(--accent); }
+.video-row.imported { opacity: .6; cursor: default; }
+.video-row .vname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pick-all { margin: 6px 0 2px; }
+.as-pool { display: flex; flex-direction: column; gap: 6px; margin: 4px 0 10px; }
+.pool-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.pool-item { display: inline-flex; align-items: center; gap: 6px; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 3px 8px 3px 3px; font-size: 12px; }
+.pool-item em { color: var(--muted); font-style: normal; font-family: var(--mono); }
+.pool-thumb { width: 40px; height: 22px; border-radius: 4px; background: #000 center/cover; }
+@media (max-width: 900px) { .video-row { grid-template-columns: auto 1fr; } }
