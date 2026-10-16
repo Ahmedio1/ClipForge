@@ -7,7 +7,7 @@ Bibliothèque locale de clips de jeu : rangement automatique, découpe, montage 
 ```bash
 npm install
 npm start          # → http://localhost:4317
-npm test           # 68 tests : unitaires, bout en bout (FFmpeg, Whisper, rclone, Ollama), navigateur
+npm test           # 76 tests : unitaires, bout en bout (FFmpeg, Whisper, rclone, Ollama, MCP), navigateur
 ```
 
 FFmpeg est fourni par `ffmpeg-static`, rien d'autre à installer. Le test navigateur utilise le
@@ -70,6 +70,15 @@ OpenRouter, DeepSeek, ou tout service compatible OpenAI — et l'IA locale (Olla
 - IA locale : ClipForge démarre tout seul Ollama s'il est installé dans `~/.local/ollama`
   (carte graphique intégrée AMD/Intel utilisée via Vulkan).
 
+**Avec ton abonnement IA (MCP)** : les abonnements (Claude Pro/Max, Gemini…) ne donnent pas de clé
+d'API, donc c'est ton appli d'IA qui pilote ClipForge via MCP. Elle liste et **regarde** tes clips,
+crée et modifie un montage, génère les sous-titres, rend la vidéo, vérifie le rendu et publie.
+- Claude Code : `claude mcp add --transport http clipforge http://localhost:4317/mcp`
+  (ou lance `claude` dans ce dossier : `.mcp.json` le déclare déjà)
+- Gemini CLI : `{"mcpServers":{"clipforge":{"httpUrl":"http://localhost:4317/mcp"}}}` dans `~/.gemini/settings.json`
+- Claude Desktop : `{"mcpServers":{"clipforge":{"command":"node","args":["<chemin>/bin/clipforge-mcp.js"]}}}`
+- ChatGPT et claude.ai web exigent un serveur public en HTTPS : non pris en charge (ClipForge reste local).
+
 **Publication**
 - **YouTube** : envoi direct (OAuth, envoi avec reprise, programmation, Shorts). Configuration unique
   avec tes propres identifiants Google Cloud, guidée dans l'appli. Tant que le projet Google n'a pas
@@ -95,6 +104,7 @@ server/
   transcribe.js  Whisper local ; captions.js découpe en sous-titres
   remote.js      accès téléphone (clé, QR) + protection anti-CSRF
   jobs.js        tâches longues suivies par l'interface
+  mcp.js         outils MCP (pour Claude Code, Gemini CLI…) ; bin/clipforge-mcp.js : pont stdio
   camera.js      caméra virtuelle du mode Combat ; tracking.js détection des persos
   cloud.js       sources cloud via rclone ; unzip.js, rclone-output.js
   ai.js          fournisseurs d'IA ; ai-features.js ce que l'IA fait dans ClipForge

@@ -18,6 +18,8 @@ import * as youtube from './youtube.js';
 import * as cloud from './cloud.js';
 import * as ai from './ai.js';
 import * as aiFeatures from './ai-features.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { createMcpServer } from './mcp.js';
 
 const PORT = Number(process.env.PORT || 4317);
 const app = express();
@@ -104,6 +106,19 @@ app.get('/media/thumbs/:id', (req, res) => {
   if (!fs.existsSync(file)) return notFound(res);
   res.sendFile(file, { maxAge: '1h' });
 });
+
+/** One JPEG frame at ?t= seconds (used by AI clients to look at a clip or a render). */
+async function sendFrame(res, file, t) {
+  if (!file || !fs.existsSync(file)) return notFound(res);
+  try {
+    const b64 = await aiFeatures.frameAt(file, Math.max(0, Number(t) || 0));
+    res.type('image/jpeg').send(Buffer.from(b64, 'base64'));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+app.get('/api/clips/:id/frame', (req, res) => sendFrame(res, getClip.get(req.params.id)?.path, req.query.t));
+app.get('/api/exports/:id/frame', (req, res) => sendFrame(res, getExport.get(req.params.id)?.out_path, req.query.t));
 
 app.post('/api/scan', (req, res) => {
   scan();
@@ -670,7 +685,7 @@ app.post('/api/cloud/sources/:id/import', (req, res) => {
 
 // ---- AI -------------------------------------------------------------------------------------
 
-app.get('/api/ai', (req, res) => res.json(ai.settings()));
+app.get('/api/ai', (req, res) => res.json({ ...ai.settings(), mcpBin: path.join(ROOT, 'bin', 'clipforge-mcp.js') }));
 
 app.put('/api/ai/providers/:id', localOnly, async (req, res) => {
   try {
@@ -790,6 +805,28 @@ app.post('/api/projects/:id/undo', (req, res) => {
   db.prepare(`UPDATE projects SET data = prev_data, prev_data = NULL, updated_at = datetime('now') WHERE id = ?`).run(row.id);
   res.json(projectDetail(row.id));
 });
+
+
+// ---- MCP: the user's own AI app (Claude Code, Gemini CLI…) drives ClipForge ------------------
+
+// Stateless Streamable HTTP: one server per request. PC only (an AI client on the phone has no use).
+app.post('/mcp', localOnly, async (req, res) => {
+  const server = createMcpServer(`http://127.0.0.1:${PORT}`);
+  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+  res.on('close', () => {
+    transport.close();
+    server.close();
+  });
+  try {
+    await server.connect(transport);
+    await transport.handleRequest(req, res, req.body);
+  } catch (err) {
+    if (!res.headersSent) res.status(500).json({ jsonrpc: '2.0', error: { code: -32603, message: err.message }, id: null });
+  }
+});
+app.all('/mcp', (req, res) => res.status(405).set('allow', 'POST').json({
+  jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed' }, id: null,
+}));
 
 // ---- Phone access ----------------------------------------------------------------
 

@@ -8,6 +8,12 @@ const SUGGESTED_LOCAL = [
 
 export let aiState = { active: null, providers: [], presets: {} };
 
+const MCP_URL = `${location.origin.replace('127.0.0.1', 'localhost')}/mcp`;
+const GEMINI_CONF = JSON.stringify({ mcpServers: { clipforge: { httpUrl: MCP_URL } } });
+const desktopConf = () => JSON.stringify({
+  mcpServers: { clipforge: { command: 'node', args: [aiState.mcpBin || 'bin/clipforge-mcp.js'] } },
+});
+
 export async function loadAi() {
   aiState = await api('/api/ai');
   document.body.classList.toggle('ai-ready', !!aiState.active);
@@ -25,7 +31,40 @@ export async function renderAi(main, isCurrent = () => true) {
       avec ta clé) ou l’IA locale (gratuite, privée, plus lente).</p>
     <div class="sources">${providers.map((p) => providerCard(p, p.id === active, presets[p.preset])).join('')
       || '<div class="empty"><h2>Aucune IA configurée</h2>Ajoute-en une ci-dessous.</div>'}</div>
-    <h2 class="section-title">Ajouter une IA</h2>
+    <h2 class="section-title">Avec ton abonnement (Claude, Gemini…) : sans clé d’API</h2>
+    <div class="sub-ai">
+      <p class="small">Les abonnements ne donnent pas de clé d’API… alors c’est l’inverse : <b>ton appli d’IA pilote ClipForge</b>.
+        Tu lui parles normalement (« fais-moi un short de 30 s avec mes meilleurs combos ») et elle regarde tes clips,
+        fait le montage, lance le rendu et vérifie le résultat. ClipForge doit être ouvert.</p>
+      <div class="sub-grid">
+        <div class="sub-card">
+          <b>Claude Code</b> <span class="muted small">(abonnement Claude Pro / Max)</span>
+          <p class="small">Dans un terminal :</p>
+          <div class="copy-row"><code>${esc(`claude mcp add --transport http clipforge ${MCP_URL}`)}</code>
+            <button class="btn small" data-copy="${esc(`claude mcp add --transport http clipforge ${MCP_URL}`)}">Copier</button></div>
+          <p class="small muted">Puis lance <code>claude</code> et demande ton montage.</p>
+        </div>
+        <div class="sub-card">
+          <b>Gemini CLI</b> <span class="muted small">(compte Google, gratuit)</span>
+          <p class="small">Ajoute dans <code>~/.gemini/settings.json</code> :</p>
+          <div class="copy-row"><code>${esc(GEMINI_CONF)}</code>
+            <button class="btn small" data-copy="${esc(GEMINI_CONF)}">Copier</button></div>
+        </div>
+        <div class="sub-card">
+          <b>Claude Desktop</b> <span class="muted small">(Windows / Mac)</span>
+          <p class="small">Réglages → Développeur → Modifier la config, ajoute :</p>
+          <div class="copy-row"><code>${esc(desktopConf())}</code>
+            <button class="btn small" data-copy="${esc(desktopConf())}">Copier</button></div>
+        </div>
+        <div class="sub-card">
+          <b>ChatGPT, claude.ai (web)</b>
+          <p class="small muted">Leurs connecteurs exigent une adresse publique en HTTPS : ClipForge restant sur ton PC,
+            utilise plutôt l’une des applis ci-contre.</p>
+        </div>
+      </div>
+    </div>
+
+    <h2 class="section-title">Ajouter une IA (clé d’API)</h2>
     <form id="ai-add" class="ai-add">
       <label class="field"><span>Service</span>
         <select name="preset" class="select">${Object.entries(presets).map(([k, p]) =>
@@ -114,6 +153,12 @@ document.addEventListener('submit', async (e) => {
 });
 
 document.addEventListener('click', async (e) => {
+  const copy = e.target.closest('[data-copy]');
+  if (copy) {
+    await navigator.clipboard.writeText(copy.dataset.copy).catch(() => {});
+    toast('Copié');
+    return;
+  }
   const card = e.target.closest('[data-ai]');
   if (!card) return;
   const id = card.dataset.ai;
