@@ -1,15 +1,23 @@
 {
   "name": "clipforge",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Bibliothèque, montage et publication de clips de jeu",
+  "main": "electron/main.js",
   "scripts": {
     "test": "node --test --test-concurrency=1 test/*.test.js",
     "start": "node server/index.js",
-    "dev": "node --watch server/index.js"
+    "dev": "node --watch server/index.js",
+    "app": "electron .",
+    "dist:linux": "electron-builder --linux AppImage --x64 && node scripts/check-package.mjs dist/linux-unpacked",
+    "dist:win": "node scripts/prepare-platform.mjs win32 x64 && electron-builder --win zip --x64 && node scripts/check-package.mjs dist/win-unpacked",
+    "dist:mac": "electron-builder --mac dmg --arm64",
+    "dist:win-installer": "electron-builder --win nsis --x64"
   },
   "keywords": [],
-  "author": "",
+  "author": {
+    "name": "Ahmedio1",
+    "email": "ahmed__daoud@outlook.fr"
+  },
   "license": "ISC",
   "type": "module",
   "dependencies": {
@@ -23,9 +31,149 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "electron": "^42.11.0",
+    "electron-builder": "^26.16.1",
     "playwright-core": "^1.56.1"
   },
   "bin": {
     "clipforge-mcp": "bin/clipforge-mcp.js"
-  }
+  },
+  "productName": "ClipForge",
+  "build": {
+    "appId": "fr.clipforge.app",
+    "productName": "ClipForge",
+    "directories": {
+      "output": "dist",
+      "buildResources": "electron"
+    },
+    "files": [
+      "electron/**",
+      "server/**",
+      "public/**",
+      "bin/**",
+      "package.json",
+      "node_modules/**",
+      "!data{,/**}",
+      "!dist{,/**}",
+      "!test{,/**}",
+      "!test-results{,/**}",
+      "!scripts{,/**}",
+      "!.mcp.json",
+      "!README.md",
+      "!**/*.map",
+      "!node_modules/onnxruntime-node/bin/**/*{cuda,tensorrt}*",
+      "!node_modules/ffmpeg-static/*.{README,LICENSE}",
+      "!node_modules/ffprobe-static/bin/*/ia32{,/**}"
+    ],
+    "asarUnpack": [
+      "node_modules/ffmpeg-static/**",
+      "node_modules/ffprobe-static/**",
+      "node_modules/onnxruntime-node/**",
+      "node_modules/sharp/**",
+      "node_modules/@img/**"
+    ],
+    "linux": {
+      "target": "AppImage",
+      "category": "AudioVideo",
+      "icon": "electron/icon.png",
+      "files": [
+        "electron/**",
+        "server/**",
+        "public/**",
+        "bin/**",
+        "package.json",
+        "node_modules/**",
+        "!data{,/**}",
+        "!dist{,/**}",
+        "!test{,/**}",
+        "!test-results{,/**}",
+        "!scripts{,/**}",
+        "!.mcp.json",
+        "!README.md",
+        "!**/*.map",
+        "!node_modules/onnxruntime-node/bin/**/*{cuda,tensorrt}*",
+        "!node_modules/ffmpeg-static/*.{README,LICENSE}",
+        "!node_modules/ffprobe-static/bin/*/ia32{,/**}",
+        "!node_modules/ffprobe-static/bin/darwin{,/**}",
+        "!node_modules/ffprobe-static/bin/win32{,/**}",
+        "!node_modules/onnxruntime-node/bin/napi-v6/darwin{,/**}",
+        "!node_modules/onnxruntime-node/bin/napi-v6/win32{,/**}",
+        "!node_modules/ffmpeg-static/ffmpeg.exe",
+        "!node_modules/@img/*{win32,darwin}*{,/**}",
+        "!node_modules/onnxruntime-node/bin/napi-v6/linux/arm64{,/**}"
+      ]
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "electron/icon.png",
+      "signAndEditExecutable": false,
+      "files": [
+        "electron/**",
+        "server/**",
+        "public/**",
+        "bin/**",
+        "package.json",
+        "node_modules/**",
+        "!data{,/**}",
+        "!dist{,/**}",
+        "!test{,/**}",
+        "!test-results{,/**}",
+        "!scripts{,/**}",
+        "!.mcp.json",
+        "!README.md",
+        "!**/*.map",
+        "!node_modules/onnxruntime-node/bin/**/*{cuda,tensorrt}*",
+        "!node_modules/ffmpeg-static/*.{README,LICENSE}",
+        "!node_modules/ffprobe-static/bin/*/ia32{,/**}",
+        "!node_modules/ffprobe-static/bin/darwin{,/**}",
+        "!node_modules/ffprobe-static/bin/linux{,/**}",
+        "!node_modules/onnxruntime-node/bin/napi-v6/darwin{,/**}",
+        "!node_modules/onnxruntime-node/bin/napi-v6/linux{,/**}",
+        "!node_modules/ffmpeg-static/ffmpeg",
+        "!node_modules/@img/*{linux,darwin}*{,/**}",
+        "!node_modules/onnxruntime-node/bin/napi-v6/win32/arm64{,/**}"
+      ],
+      "artifactName": "ClipForge-${version}-windows-portable.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "ClipForge",
+      "artifactName": "ClipForge-Setup-${version}.${ext}"
+    },
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.video",
+      "icon": "electron/icon.png",
+      "files": [
+        "electron/**",
+        "server/**",
+        "public/**",
+        "bin/**",
+        "package.json",
+        "node_modules/**",
+        "!data{,/**}",
+        "!dist{,/**}",
+        "!test{,/**}",
+        "!test-results{,/**}",
+        "!scripts{,/**}",
+        "!.mcp.json",
+        "!README.md",
+        "!**/*.map",
+        "!node_modules/onnxruntime-node/bin/**/*{cuda,tensorrt}*",
+        "!node_modules/ffmpeg-static/*.{README,LICENSE}",
+        "!node_modules/ffprobe-static/bin/*/ia32{,/**}",
+        "!node_modules/ffprobe-static/bin/linux{,/**}",
+        "!node_modules/ffprobe-static/bin/win32{,/**}",
+        "!node_modules/onnxruntime-node/bin/napi-v6/linux{,/**}",
+        "!node_modules/onnxruntime-node/bin/napi-v6/win32{,/**}",
+        "!node_modules/ffmpeg-static/ffmpeg.exe",
+        "!node_modules/@img/*{win32,linux}*{,/**}"
+      ]
+    },
+    "appImage": {
+      "artifactName": "ClipForge-${version}.${ext}"
+    }
+  },
+  "desktopName": "clipforge.desktop"
 }

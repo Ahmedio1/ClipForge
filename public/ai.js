@@ -10,9 +10,7 @@ export let aiState = { active: null, providers: [], presets: {} };
 
 const MCP_URL = `${location.origin.replace('127.0.0.1', 'localhost')}/mcp`;
 const GEMINI_CONF = JSON.stringify({ mcpServers: { clipforge: { httpUrl: MCP_URL } } });
-const desktopConf = () => JSON.stringify({
-  mcpServers: { clipforge: { command: 'node', args: [aiState.mcpBin || 'bin/clipforge-mcp.js'] } },
-});
+const desktopConf = () => JSON.stringify({ mcpServers: { clipforge: aiState.mcpLaunch || { command: 'node', args: ['bin/clipforge-mcp.js'] } } });
 
 export async function loadAi() {
   aiState = await api('/api/ai');
@@ -51,7 +49,7 @@ export async function renderAi(main, isCurrent = () => true) {
             <button class="btn small" data-copy="${esc(GEMINI_CONF)}">Copier</button></div>
         </div>
         <div class="sub-card">
-          <b>Claude Desktop</b> <span class="muted small">(Windows / Mac)</span>
+          <b>Claude Desktop</b> <span class="muted small">(Windows / Mac, ClipForge ouvert)</span>
           <p class="small">Réglages → Développeur → Modifier la config, ajoute :</p>
           <div class="copy-row"><code>${esc(desktopConf())}</code>
             <button class="btn small" data-copy="${esc(desktopConf())}">Copier</button></div>

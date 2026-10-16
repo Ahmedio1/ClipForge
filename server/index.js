@@ -685,7 +685,20 @@ app.post('/api/cloud/sources/:id/import', (req, res) => {
 
 // ---- AI -------------------------------------------------------------------------------------
 
-app.get('/api/ai', (req, res) => res.json({ ...ai.settings(), mcpBin: path.join(ROOT, 'bin', 'clipforge-mcp.js') }));
+/** How an AI app should launch the stdio MCP bridge: the desktop app's own executable when packaged. */
+function mcpLaunch() {
+  const script = path.join(ROOT, 'bin', 'clipforge-mcp.js');
+  if (!process.versions.electron) return { command: 'node', args: [script] };
+  const env = { ELECTRON_RUN_AS_NODE: '1' };
+  if (!ROOT.includes('app.asar')) return { command: process.execPath, args: [script], env };
+  // The AppImage and the portable .exe unpack to a new temp folder on each launch, so the config
+  // names the stable launcher and the bridge is located from the running executable instead.
+  const locate = "const p=require('path');import(require('url').pathToFileURL(p.join(p.dirname(process.execPath),"
+    + "process.platform==='darwin'?'../Resources':'resources','app.asar','bin','clipforge-mcp.js')).href)";
+  const command = process.env.APPIMAGE || process.env.PORTABLE_EXECUTABLE_FILE || process.execPath;
+  return { command, args: ['-e', locate], env };
+}
+app.get('/api/ai', (req, res) => res.json({ ...ai.settings(), mcpLaunch: mcpLaunch() }));
 
 app.put('/api/ai/providers/:id', localOnly, async (req, res) => {
   try {
@@ -840,11 +853,14 @@ app.put('/api/remote', localOnly, async (req, res) => {
 app.listen(PORT, '127.0.0.1', (err) => {
   // Express 5 reports listen errors here instead of throwing
   if (err) {
+    // inside the desktop app, the window decides what to do (e.g. reuse a running ClipForge)
+    if (process.env.CLIPFORGE_EMBEDDED) return process.emit('clipforge:error', err);
     console.error(err.code === 'EADDRINUSE'
       ? `Le port ${PORT} est déjà utilisé : ClipForge tourne sûrement déjà (http://localhost:${PORT}).`
       : `Démarrage impossible : ${err.message}`);
     process.exit(1);
   }
+  process.emit('clipforge:ready', PORT);
   console.log(`ClipForge → http://localhost:${PORT}`);
   console.log(`Dossier des clips : ${getConfig().clipsDir}`);
   watchClipsDir();

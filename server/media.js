@@ -1,8 +1,12 @@
 import { spawn } from 'node:child_process';
-import ffmpegPath from 'ffmpeg-static';
+import path from 'node:path';
+import ffmpegStatic from 'ffmpeg-static';
 import ffprobeStatic from 'ffprobe-static';
 
-export { ffmpegPath };
+// In the packaged desktop app, binaries live next to the read-only archive, in app.asar.unpacked.
+const unpacked = (p) => p.replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
+export const ffmpegPath = unpacked(ffmpegStatic);
+const ffprobePath = unpacked(ffprobeStatic.path);
 
 // Streaming platforms normalise to about -14 LUFS; matching it avoids being turned down.
 // The trailing aformat pins the layout loudnorm leaves open (else the graph can't negotiate).
@@ -29,7 +33,7 @@ export function run(bin, args, onStdout) {
 }
 
 export async function probe(file) {
-  const out = await run(ffprobeStatic.path, [
+  const out = await run(ffprobePath, [
     '-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', file,
   ]);
   const info = JSON.parse(out);
@@ -46,7 +50,7 @@ export async function probe(file) {
 }
 
 export async function probeDuration(file) {
-  const out = await run(ffprobeStatic.path, ['-v', 'error', '-print_format', 'json', '-show_format', file]);
+  const out = await run(ffprobePath, ['-v', 'error', '-print_format', 'json', '-show_format', file]);
   const duration = Number(JSON.parse(out).format?.duration);
   if (!duration) throw new Error('Durée illisible');
   return duration;

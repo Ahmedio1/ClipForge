@@ -10,6 +10,25 @@ npm start          # → http://localhost:4317
 npm test           # 76 tests : unitaires, bout en bout (FFmpeg, Whisper, rclone, Ollama, MCP), navigateur
 ```
 
+## Appli de bureau (Windows, macOS, Linux)
+
+ClipForge existe en appli autonome (Electron) : double-clic, pas de terminal ni de Node.js à installer.
+Tes données vont dans le dossier de l'appli (`~/.config/ClipForge`, `%APPDATA%\ClipForge`,
+`~/Library/Application Support/ClipForge`).
+
+```bash
+npm run app          # lancer l'appli de bureau depuis les sources
+npm run dist:linux   # → dist/ClipForge-<version>.AppImage
+npm run dist:win     # → dist/ClipForge-<version>-windows-portable.zip (depuis Linux)
+```
+
+- **Toutes plateformes** : onglet *Actions* de GitHub → « Applications de bureau » → *Run workflow*
+  (ou pousser un tag `v1.0.0`) : installateur Windows `.exe`, `.dmg` macOS (Apple Silicon), AppImage Linux.
+- Les applis ne sont pas signées (certificats payants) : Windows SmartScreen → « Informations
+  complémentaires » → « Exécuter quand même » ; macOS → clic droit → Ouvrir (ou `xattr -cr /Applications/ClipForge.app`).
+- Linux : l'AppImage a besoin de FUSE 2 (`sudo apt install libfuse2t64` sur Ubuntu/Debian récents).
+- `scripts/check-package.mjs` fait échouer la fabrication si un fichier privé (base, clés, exports) s'y glisse.
+
 FFmpeg est fourni par `ffmpeg-static`, rien d'autre à installer. Le test navigateur utilise le
 Chromium de Playwright s'il est présent (`CHROME_PATH` pour en indiquer un autre) ; sinon il est sauté.
 
@@ -109,6 +128,7 @@ server/
   cloud.js       sources cloud via rclone ; unzip.js, rclone-output.js
   ai.js          fournisseurs d'IA ; ai-features.js ce que l'IA fait dans ClipForge
   db.js          SQLite (node:sqlite)
+electron/      appli de bureau (main.js, icône) ; scripts/ fabrication multi-OS
 data/          base, miniatures, exports, musiques (non versionné)
 ```
 
