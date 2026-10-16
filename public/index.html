@@ -35,6 +35,8 @@
         <button class="nav-item" data-nav="favorites"><span>★</span> Favoris</button>
         <button class="nav-item" data-nav="projects"><span>✂</span> Montages</button>
         <button class="nav-item" data-nav="exports"><span>⇪</span> Exports &amp; publication <em id="exports-badge"></em></button>
+        <button class="nav-item" data-nav="cloud"><span>☁</span> Sources cloud</button>
+        <button class="nav-item" data-nav="ai"><span>✨</span> IA</button>
       </div>
       <div class="nav-title">Jeux</div>
       <div id="games" class="nav-group"></div>
@@ -149,6 +151,7 @@
       <span id="mt-saved" class="muted small"></span>
       <span class="spacer"></span>
       <span id="mt-total" class="tc muted hide-sm"></span>
+      <button id="mt-assistant" class="btn ghost" title="Demande à l’IA de modifier le montage">✨ Assistant IA</button>
       <button id="mt-templates" class="btn ghost">Modèles</button>
       <button id="mt-render" class="btn primary">Rendre la vidéo</button>
     </div>
@@ -205,6 +208,11 @@
         </div>
 
         <div class="tab-panel" data-panel="texts" hidden>
+          <div class="subs">
+            <div class="row-between"><b>✨ Accroche</b>
+              <button id="mt-hooks" class="btn small">Proposer</button></div>
+            <div id="mt-hook-list" class="hook-list"></div>
+          </div>
           <details id="mt-subs" class="subs" open>
             <summary>🎙 Sous-titres automatiques</summary>
             <p class="muted small">ClipForge écoute les voix de tes clips (micro, vocal) et écrit les sous-titres. Tout se passe sur ton PC.</p>
@@ -218,16 +226,16 @@
                 </select></label>
               <label class="field"><span>Style</span>
                 <select id="sub-style" class="select">
-                  <option value="tiktok">TikTok (gros, centré)</option>
-                  <option value="classic">Classique (bas, fond)</option>
+                  <option value="tiktok">TikTok</option>
+                  <option value="classic">Classique</option>
                 </select></label>
             </div>
             <div class="row2">
-              <label class="field"><span>Mots par ligne</span>
+              <label class="field"><span>Mots / ligne</span>
                 <select id="sub-words" class="select"><option>2</option><option>3</option><option selected>4</option><option>6</option><option>8</option></select></label>
               <label class="field"><span>Précision</span>
                 <select id="sub-quality" class="select">
-                  <option value="fast">Rapide</option><option value="accurate">Précise (+ lent, 250 Mo)</option>
+                  <option value="fast">Rapide</option><option value="accurate" title="Plus lent, 250 Mo à télécharger une fois">Précise</option>
                 </select></label>
             </div>
             <button id="sub-run" class="btn primary block">Générer les sous-titres</button>
@@ -320,6 +328,38 @@
     </div>
   </dialog>
 
+  <dialog id="assistant" class="dialog wide">
+    <div class="pub-head"><h2>✨ Assistant de montage</h2><button class="btn ghost" data-close-assistant>✕</button></div>
+    <p class="muted small">Dis ce que tu veux, l’IA modifie le montage. Tu peux toujours annuler.</p>
+    <textarea id="as-input" rows="3" placeholder="ex. Fais un short de 30 s max avec mes meilleurs combos, mise en page combat, et un titre qui claque"></textarea>
+    <div class="as-examples">
+      <button class="chip" data-example="Garde seulement les 3 moments les plus intenses, 25 secondes max">3 meilleurs moments</button>
+      <button class="chip" data-example="Passe en vertical mise en page combat, 60 i/s, coupes sèches">Style combat</button>
+      <button class="chip" data-example="Ajoute un titre accrocheur en haut pendant les 3 premières secondes">Titre en haut</button>
+      <button class="chip" data-example="Remets les extraits dans l’ordre chronologique et raccourcis chacun à 5 secondes">Plus court</button>
+    </div>
+    <div id="as-result" class="as-result" hidden></div>
+    <div class="dialog-actions">
+      <button id="as-undo" class="btn ghost" hidden>↶ Annuler la dernière modification IA</button>
+      <button id="as-run" class="btn primary">Appliquer</button>
+    </div>
+  </dialog>
+
+  <dialog id="cloud-add" class="dialog wide">
+    <div class="pub-head"><h2>Ajouter une source</h2><button class="btn ghost" data-close-cloud-add>✕</button></div>
+    <div id="ca-body"></div>
+  </dialog>
+
+  <dialog id="cloud-browse" class="dialog wide">
+    <div class="pub-head"><h2>Choisir le dossier à surveiller</h2><button class="btn ghost" data-close-cloud-browse>✕</button></div>
+    <div id="cb-path" class="crumbs"></div>
+    <div id="cb-list" class="folder-list"></div>
+    <div class="dialog-actions">
+      <span id="cb-count" class="muted small"></span>
+      <button id="cb-choose" class="btn primary">Surveiller ce dossier</button>
+    </div>
+  </dialog>
+
   <!-- Publish -->
   <dialog id="publish" class="dialog wide">
     <div class="pub-head">
@@ -337,6 +377,7 @@
 
   <div id="selbar" class="selbar" hidden>
     <span id="selbar-count"></span>
+    <button id="selbar-ai" class="btn primary" title="L’IA regarde les moments forts et garde les plus spectaculaires" hidden>✨ Best-of IA</button>
     <button id="selbar-auto" class="btn primary" title="Garde automatiquement le meilleur moment de chaque clip">✨ Best-of auto</button>
     <button id="selbar-create" class="btn">Créer un montage</button>
     <button id="selbar-clear" class="btn ghost">Annuler</button>

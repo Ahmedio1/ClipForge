@@ -1,6 +1,8 @@
 import { $, $$, api, esc, fitBox, fmtDateTime, fmtDay, fmtSize, fmtTime, toast, uploadFile, waitJob } from './util.js';
 import { openProject, renderProjects, addToProjectMenu } from './montage.js';
 import { openPublish, renderPublications } from './publish.js';
+import { renderCloud } from './cloud.js';
+import { aiState, loadAi, renderAi } from './ai.js';
 
 // ---------------------------------------------------------------- state
 
@@ -71,6 +73,8 @@ async function renderMain() {
   const seq = ++renderSeq;
   if (state.view.kind === 'exports') return renderExports();
   if (state.view.kind === 'projects') return renderProjects($('#main'), () => seq === renderSeq);
+  if (state.view.kind === 'cloud') return renderCloud($('#main'), () => seq === renderSeq);
+  if (state.view.kind === 'ai') return renderAi($('#main'), () => seq === renderSeq);
   await loadClips();
   if (seq !== renderSeq) return;
   const title = { all: 'Tous les clips', favorites: 'Favoris', game: state.view.game }[state.view.kind];
@@ -162,6 +166,7 @@ $('#main').addEventListener('click', async (e) => {
 function renderSelectionBar() {
   const n = state.selected.size;
   $('#selbar').hidden = n === 0;
+  $('#selbar-ai').hidden = !aiState.active;
   $('#selbar-count').textContent = `${n} clip${n > 1 ? 's' : ''} sélectionné${n > 1 ? 's' : ''}`;
 }
 
@@ -171,24 +176,27 @@ $('#selbar-clear').addEventListener('click', () => {
   renderSelectionBar();
 });
 
-$('#selbar-auto').addEventListener('click', async () => {
-  const btn = $('#selbar-auto');
+$('#selbar-ai').addEventListener('click', () => bestOf($('#selbar-ai'), true));
+$('#selbar-auto').addEventListener('click', () => bestOf($('#selbar-auto'), false));
+
+async function bestOf(btn, useAi) {
+  const label = btn.textContent;
   btn.disabled = true;
   try {
     const job = await api('/api/projects/auto', {
-      method: 'POST', body: JSON.stringify({ clipIds: [...state.selected], maxDuration: 60 }),
+      method: 'POST', body: JSON.stringify({ clipIds: [...state.selected], maxDuration: 60, ai: useAi }),
     });
     const { projectId } = await waitJob(job, (j) => { btn.textContent = j.message || 'Analyse…'; });
     $('#selbar-clear').click();
-    toast('Best-of créé à partir des meilleurs moments ✨');
+    toast(useAi ? 'Best-of choisi par l’IA ✨' : 'Best-of créé à partir des meilleurs moments ✨');
     openProject(projectId);
   } catch (err) {
     toast(err.message, true);
   } finally {
     btn.disabled = false;
-    btn.textContent = '✨ Best-of auto';
+    btn.textContent = label;
   }
-});
+}
 
 $('#selbar-create').addEventListener('click', async () => {
   // keep library order (most recent first reads naturally as a highlight reel when reversed)
@@ -585,7 +593,7 @@ async function poll() {
     if (s.version !== state.libraryVersion) {
       state.libraryVersion = s.version;
       await renderGames();
-      if (!['exports', 'projects'].includes(state.view.kind) && !overlayOpen()) await renderMain();
+      if (!['exports', 'projects', 'cloud', 'ai'].includes(state.view.kind) && !overlayOpen()) await renderMain();
     }
     if (s.exportsKey !== state.exportsKey) {
       state.exportsKey = s.exportsKey;
@@ -636,6 +644,7 @@ function handleHash() {
 }
 
 handleHash();
+loadAi().catch(() => {});
 markActiveNav();
 renderMain();
 poll();

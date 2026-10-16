@@ -78,6 +78,11 @@ if (!clipCols.includes('analysis')) {
   db.exec('ALTER TABLE clips ADD COLUMN analysis TEXT'); // cached highlight detection (JSON)
 }
 
+const projectCols = db.prepare('PRAGMA table_info(projects)').all().map((c) => c.name);
+if (!projectCols.includes('prev_data')) {
+  db.exec('ALTER TABLE projects ADD COLUMN prev_data TEXT'); // state before the last AI edit (undo)
+}
+
 const exportCols = db.prepare('PRAGMA table_info(exports)').all().map((c) => c.name);
 if (!exportCols.includes('project_id')) {
   db.exec('ALTER TABLE exports ADD COLUMN project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL');

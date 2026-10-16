@@ -34,6 +34,9 @@ export function status(redirectUri) {
   };
 }
 
+/** The Google OAuth client, reusable for Google Drive (same Google Cloud project). */
+export const googleClient = () => (store.clientId ? { clientId: store.clientId, clientSecret: store.clientSecret } : null);
+
 export function setCredentials({ clientId, clientSecret }) {
   clientId = String(clientId || '').trim();
   clientSecret = String(clientSecret || '').trim();

@@ -7,7 +7,7 @@ Bibliothèque locale de clips de jeu : rangement automatique, découpe, montage 
 ```bash
 npm install
 npm start          # → http://localhost:4317
-npm test           # 45 tests : unitaires, bout en bout (vrais rendus FFmpeg, vrai Whisper), navigateur
+npm test           # 68 tests : unitaires, bout en bout (FFmpeg, Whisper, rclone, Ollama), navigateur
 ```
 
 FFmpeg est fourni par `ffmpeg-static`, rien d'autre à installer. Le test navigateur utilise le
@@ -51,6 +51,25 @@ Chromium de Playwright s'il est présent (`CHROME_PATH` pour en indiquer un autr
 - « Changer la clé » déconnecte tous les téléphones.
 - Interface adaptée au mobile, avec un bouton « Importer » pour envoyer des vidéos depuis le téléphone.
 
+**Mise en page « Combat »** (Tekken, Street Fighter…) : bandeau des barres de vie, caméra virtuelle
+qui suit les persos (détection locale, zoom image par image), légende de replay retirée. Format d'export
+« Vertical combat » ou modèle « Combat ». Le son de tous les exports est normalisé à −14 LUFS.
+
+**Sources cloud** (☁) : OneDrive, Google Drive, Dropbox, iCloud (Drive et Photos), Mega, NAS/partage
+Windows, ou un dossier monté. Basé sur rclone (téléchargé et vérifié automatiquement). Les nouvelles
+vidéos sont copiées dans `<dossier des clips>/Cloud/<source>` selon l'intervalle choisi.
+Google Drive : utilise tes identifiants Google Cloud (ceux de YouTube sont réutilisés).
+
+**IA** (✨) : n'importe quel fournisseur — Claude (SDK officiel), ChatGPT, Gemini, Mistral, Groq,
+OpenRouter, DeepSeek, ou tout service compatible OpenAI — et l'IA locale (Ollama, LM Studio).
+- Textes de publication par plateforme (« Rédiger avec l'IA »), en regardant la vidéo.
+- Accroches pour le haut des shorts.
+- « Best-of IA » : l'IA regarde les moments forts et garde les plus spectaculaires.
+- Assistant de montage : une demande en français modifie le montage, avec annulation.
+- Les clés restent sur ton PC (`data/ai.json`, lisible par toi seul) et ne sont jamais renvoyées à l'interface.
+- IA locale : ClipForge démarre tout seul Ollama s'il est installé dans `~/.local/ollama`
+  (carte graphique intégrée AMD/Intel utilisée via Vulkan).
+
 **Publication**
 - **YouTube** : envoi direct (OAuth, envoi avec reprise, programmation, Shorts). Configuration unique
   avec tes propres identifiants Google Cloud, guidée dans l'appli. Tant que le projet Google n'a pas
@@ -76,6 +95,9 @@ server/
   transcribe.js  Whisper local ; captions.js découpe en sous-titres
   remote.js      accès téléphone (clé, QR) + protection anti-CSRF
   jobs.js        tâches longues suivies par l'interface
+  camera.js      caméra virtuelle du mode Combat ; tracking.js détection des persos
+  cloud.js       sources cloud via rclone ; unzip.js, rclone-output.js
+  ai.js          fournisseurs d'IA ; ai-features.js ce que l'IA fait dans ClipForge
   db.js          SQLite (node:sqlite)
 data/          base, miniatures, exports, musiques (non versionné)
 ```

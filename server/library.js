@@ -68,8 +68,10 @@ async function addOrRefresh(file, clipsDir) {
   } else {
     const parsed = parseCaptureName(path.basename(file));
     const relDir = path.relative(clipsDir, path.dirname(file));
-    const topDir = relDir && !relDir.startsWith('..') ? relDir.split(path.sep)[0] : null;
-    const folderGame = topDir === 'Imports' ? null : topDir;
+    // the first folder names the game, except ClipForge's own folders: Imports/ and
+    // Cloud/<source>/ (there, the folder below the source's one does)
+    const parts = relDir && !relDir.startsWith('..') ? relDir.split(path.sep) : [];
+    const folderGame = parts[0] === 'Cloud' ? (parts[2] ?? null) : parts[0] === 'Imports' ? null : (parts[0] ?? null);
     const game = parsed.game || folderGame || UNKNOWN_GAME;
     db.exec('BEGIN');
     try {

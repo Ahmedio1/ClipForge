@@ -1,4 +1,5 @@
-import { $, $$, api, esc, toast } from './util.js';
+import { $, $$, api, esc, toast, waitJob } from './util.js';
+import { aiState } from './ai.js';
 
 const PLATFORM = {
   youtube: { label: 'YouTube', icon: '▶' },
@@ -86,6 +87,7 @@ function uploadHtml(s) {
   return `
     <div class="connected">Connecté à <b>${esc(s.channel?.title || 'ta chaîne')}</b>
       <button class="btn small ghost" id="yt-disconnect">Déconnecter</button></div>
+    ${aiButton()}
     <label class="field"><span>Titre <em class="count" data-count-for="yt-title" data-max="100"></em></span>
       <input id="yt-title" type="text" maxlength="100" value="${esc(baseTitle() + (vertical ? ' #Shorts' : ''))}"></label>
     <label class="field"><span>Description</span>
@@ -110,6 +112,7 @@ function uploadHtml(s) {
 
 $('#pub-body').addEventListener('click', async (e) => {
   const id = e.target.id;
+  if (e.target.closest('[data-ai-write]')) return aiWrite(e.target.closest('[data-ai-write]'));
   try {
     if (id === 'yt-save') {
       await api('/api/youtube/credentials', {
@@ -170,6 +173,7 @@ function manualHtml(tab) {
   }[tab];
   return `
     <p class="muted small">${why} ClipForge prépare donc tout et tu postes en 3 clics :</p>
+    ${aiButton()}
     <label class="field"><span>Légende <em class="count" data-count-for="man-caption" data-max="${p.limit}"></em></span>
       <textarea id="man-caption" rows="4" maxlength="${p.limit}">${esc(caption)}</textarea></label>
     <ol class="steps">
@@ -179,6 +183,38 @@ function manualHtml(tab) {
     </ol>
     ${tab !== 'x' && !isVertical() ? `<p class="note">Astuce : ${p.label} met en avant les vidéos verticales. Exporte en 9:16.</p>` : ''}
     <div class="dialog-actions"><button class="btn primary" data-manual="done">C’est posté ✓</button></div>`;
+}
+
+function aiButton() {
+  return aiState.active
+    ? '<button class="btn ai-btn" data-ai-write>✨ Rédiger avec l’IA</button><span class="small muted" data-ai-status></span>'
+    : '<span class="small muted">Astuce : configure une IA (menu ✨ IA) pour rédiger titre et hashtags automatiquement.</span>';
+}
+
+/** Asks the AI for texts tailored to the current tab, and fills the form with them. */
+async function aiWrite(btn) {
+  const status = $('[data-ai-status]');
+  btn.disabled = true;
+  try {
+    const job = await api('/api/ai/publish-text', { method: 'POST', body: JSON.stringify({ exportId: pub.exp.id, platform: pub.tab }) });
+    const r = await waitJob(job, (j) => { status.textContent = j.message || 'L’IA réfléchit…'; });
+    const tags = r.hashtags.map((h) => `#${h}`).join(' ');
+    if (pub.tab === 'youtube') {
+      $('#yt-title').value = r.title.slice(0, 100);
+      $('#yt-desc').value = `${r.description}\n\n${tags}`.trim();
+      $('#yt-tags').value = r.hashtags.join(', ');
+    } else {
+      $('#man-caption').value = `${pub.tab === 'x' ? r.title || r.description : r.description} ${tags}`.trim()
+        .slice(0, Number($('#man-caption').maxLength) || 2200);
+    }
+    updateCounts();
+    status.textContent = '✔ Relis et modifie si besoin';
+  } catch (err) {
+    status.textContent = '';
+    toast(err.message, true);
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 // live character counters

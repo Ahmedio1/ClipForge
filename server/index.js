@@ -15,6 +15,9 @@ import { applyListeners, guard, isLocal, remoteStatus, setRemote } from './remot
 import { groupCaptions, LANGUAGES, MODELS, transcribe } from './transcribe.js';
 import { scan, state, thumbPath, VIDEO_EXTS, watchClipsDir } from './library.js';
 import * as youtube from './youtube.js';
+import * as cloud from './cloud.js';
+import * as ai from './ai.js';
+import * as aiFeatures from './ai-features.js';
 
 const PORT = Number(process.env.PORT || 4317);
 const app = express();
@@ -228,7 +231,7 @@ function projectDetail(id) {
   const row = getProject.get(id);
   if (!row) return null;
   const data = sanitizeProjectData(JSON.parse(row.data));
-  return { ...projectSummary(row), data, clips: Object.fromEntries(clipsFor(data)) };
+  return { ...projectSummary(row), data, clips: Object.fromEntries(clipsFor(data)), canUndo: !!row.prev_data };
 }
 
 app.get('/api/projects/:id', (req, res) => {
@@ -426,7 +429,9 @@ app.post('/api/projects/auto', (req, res) => {
   const perClip = Math.max(1, Math.min(5, Number(req.body.perClip) || 1));
   const maxDuration = Math.max(5, Number(req.body.maxDuration) || 60);
 
+  const useAi = !!req.body.ai && ai.isConfigured();
   const job = startJob('auto-montage', async (update) => {
+    if (useAi) return { projectId: await aiBestOf(clips, maxDuration, req.body.templateId, update) };
     const picks = [];
     for (const [i, clip] of clips.entries()) {
       update({ progress: i / clips.length, message: `Analyse de ${clip.title || clip.game} (${i + 1}/${clips.length})…` });
@@ -452,6 +457,35 @@ app.post('/api/projects/auto', (req, res) => {
   });
   res.json(job);
 });
+
+/** Best-of where the AI looks at the loudest moments of each clip and keeps the best ones. */
+async function aiBestOf(clips, maxDuration, templateId, update) {
+  const candidates = [];
+  for (const [i, clip] of clips.entries()) {
+    update({ progress: (i / clips.length) * 0.5, message: `Analyse de ${clip.title || clip.game} (${i + 1}/${clips.length})…` });
+    const { highlights } = await clipAnalysis(clip);
+    for (const h of highlights.slice(0, 3)) candidates.push({ clip, ...h });
+  }
+  if (!candidates.length) throw new Error('Aucun moment fort détecté dans ces clips');
+  // keep the image count reasonable: strongest sounds first
+  const shortlist = candidates.sort((a, b) => b.score - a.score).slice(0, 16);
+  update({ progress: 0.6, message: 'L’IA regarde les moments…' });
+  const ranked = await aiFeatures.rankMoments(shortlist);
+  const chosen = [];
+  let total = 0;
+  for (const c of ranked) {
+    if (total + (c.end - c.start) > maxDuration && chosen.length) continue;
+    chosen.push(c);
+    total += c.end - c.start;
+  }
+  if (!chosen.length) throw new Error('L’IA n’a retenu aucun moment');
+  chosen.sort((a, b) => a.clip.recorded_at.localeCompare(b.clip.recorded_at) || a.start - b.start);
+  let data = sanitizeProjectData({ segments: chosen.map((c) => ({ clipId: c.clip.id, start: c.start, end: c.end })) });
+  const tpl = templateId && db.prepare('SELECT * FROM templates WHERE id = ?').get(templateId);
+  if (tpl) data = applyTemplate(data, JSON.parse(tpl.data));
+  const name = `Best-of IA du ${new Date().toLocaleDateString('fr-FR')}`;
+  return Number(db.prepare('INSERT INTO projects (name, data) VALUES (?, ?)').run(name, JSON.stringify(data)).lastInsertRowid);
+}
 
 app.get('/api/jobs/:id', (req, res) => {
   const job = getJob(req.params.id);
@@ -546,6 +580,196 @@ app.post('/api/projects/:id/apply-template', (req, res) => {
   res.json(projectDetail(row.id));
 });
 
+
+// ---- Cloud sources --------------------------------------------------------------------
+
+app.get('/api/cloud', (req, res) => {
+  res.json({ providers: cloud.PROVIDERS, sources: cloud.listSources(), googleClient: !!youtube.googleClient() });
+});
+
+app.post('/api/cloud/sources', localOnly, async (req, res) => {
+  const params = { ...req.body.params };
+  if (req.body.type === 'drive' && !params.client_id && youtube.googleClient()) {
+    params.client_id = youtube.googleClient().clientId;
+    params.client_secret = youtube.googleClient().clientSecret;
+  }
+  try {
+    res.json(await cloud.createSource({ name: req.body.name, type: req.body.type, params }));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/cloud/sources/:id/setup', (req, res) => {
+  const s = cloud.setupStatus(Number(req.params.id));
+  return s ? res.json(s) : notFound(res);
+});
+
+app.post('/api/cloud/sources/:id/answer', localOnly, (req, res) => {
+  try {
+    cloud.answer(Number(req.params.id), String(req.body.state), String(req.body.value ?? ''));
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/cloud/sources/:id/browse', async (req, res) => {
+  try {
+    res.json(await cloud.browse(Number(req.params.id), String(req.query.path || '')));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.put('/api/cloud/sources/:id', (req, res) => {
+  const src = db.prepare('SELECT * FROM cloud_sources WHERE id = ?').get(req.params.id);
+  if (!src) return notFound(res);
+  const b = req.body;
+  db.prepare('UPDATE cloud_sources SET name = ?, folder = ?, max_age_days = ?, interval_min = ? WHERE id = ?').run(
+    String(b.name ?? src.name).trim().slice(0, 60) || src.name,
+    src.type === 'local' ? src.folder : String(b.folder ?? src.folder),
+    Math.max(0, Math.min(3650, Number(b.max_age_days ?? src.max_age_days) || 0)),
+    Math.max(0, Math.min(1440, Number(b.interval_min ?? src.interval_min) || 0)),
+    src.id,
+  );
+  res.json(cloud.listSources().find((s) => s.id === src.id));
+});
+
+app.post('/api/cloud/sources/:id/sync', (req, res) => {
+  cloud.syncSource(Number(req.params.id)).then(() => scan());
+  res.json({ ok: true });
+});
+
+app.delete('/api/cloud/sources/:id', localOnly, async (req, res) => {
+  await cloud.deleteSource(Number(req.params.id));
+  res.json({ ok: true });
+});
+
+
+// ---- AI -------------------------------------------------------------------------------------
+
+app.get('/api/ai', (req, res) => res.json(ai.settings()));
+
+app.put('/api/ai/providers/:id', localOnly, async (req, res) => {
+  try {
+    const out = ai.saveProvider(String(req.params.id).replace(/[^\w-]/g, '').slice(0, 40), req.body);
+    if (req.body.preset === 'ollama') await ai.ensureOllama();
+    res.json(out);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/api/ai/providers/:id', localOnly, (req, res) => res.json(ai.deleteProvider(req.params.id)));
+
+app.put('/api/ai/active', localOnly, (req, res) => {
+  try {
+    res.json(ai.setActive(String(req.body.id)));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/ai/providers/:id/models', async (req, res) => {
+  try {
+    res.json(await ai.listModels(req.params.id));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/ai/providers/:id/ollama', async (req, res) => {
+  try {
+    res.json(await ai.ollamaStatus(req.params.id));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/ai/providers/:id/ollama/pull', localOnly, (req, res) => {
+  const model = String(req.body.model || '').trim();
+  if (!/^[\w.:/-]+$/.test(model)) return res.status(400).json({ error: 'Nom de modèle invalide' });
+  res.json(startJob('ollama-pull', (update) => ai.ollamaPull(req.params.id, model, (p, status) =>
+    update({ progress: p, message: `${status || 'Téléchargement'}… ${Math.round(p * 100)} %` }))));
+});
+
+app.post('/api/ai/providers/:id/test', (req, res) => {
+  res.json(startJob('ai-test', async () => ai.askJson({
+    providerId: req.params.id,
+    system: 'Tu réponds en JSON.',
+    prompt: 'Réponds {"ok": true, "message": "<une phrase de bienvenue pour un joueur, en français>"}.',
+    effort: 'low',
+    schema: {
+      type: 'object', additionalProperties: false, required: ['ok', 'message'],
+      properties: { ok: { type: 'boolean' }, message: { type: 'string' } },
+    },
+  })));
+});
+
+/** Spoken words in a project (its generated subtitles), to give the AI more context. */
+const transcriptOf = (data) => data.texts.filter((t) => t.auto).map((t) => t.text).join(' ');
+
+app.post('/api/ai/publish-text', (req, res) => {
+  const exp = getExport.get(req.body.exportId);
+  if (!exp?.out_path || !fs.existsSync(exp.out_path)) return notFound(res, 'Export introuvable');
+  const clip = exp.clip_id && getClip.get(exp.clip_id);
+  const proj = exp.project_id && getProject.get(exp.project_id);
+  const data = proj ? sanitizeProjectData(JSON.parse(proj.data)) : null;
+  const games = data ? [...clipsFor(data).values()].map((c) => c.game) : clip ? [clip.game] : [];
+  res.json(startJob('ai-publish', async (update) => {
+    update({ message: 'L’IA regarde la vidéo…' });
+    const duration = await probeDuration(exp.out_path);
+    return aiFeatures.publishTexts({
+      exp, game: [...new Set(games)].join(', '), transcript: data ? transcriptOf(data) : '',
+      platform: req.body.platform, file: exp.out_path, duration,
+    });
+  }));
+});
+
+app.post('/api/ai/hooks', (req, res) => {
+  const row = getProject.get(req.body.projectId);
+  if (!row) return notFound(res);
+  const data = sanitizeProjectData(JSON.parse(row.data));
+  const { segments } = planTimeline(data, clipsFor(data));
+  if (!segments.length) return res.status(400).json({ error: 'Ajoute d’abord des clips' });
+  res.json(startJob('ai-hooks', async (update) => {
+    update({ message: 'L’IA cherche une accroche…' });
+    return { hooks: await aiFeatures.hookIdeas({ projectName: row.name, segments, transcript: transcriptOf(data) }) };
+  }));
+});
+
+app.post('/api/ai/director', (req, res) => {
+  const row = getProject.get(req.body.projectId);
+  const instruction = String(req.body.instruction || '').trim().slice(0, 1000);
+  if (!row) return notFound(res);
+  if (!instruction) return res.status(400).json({ error: 'Écris ce que tu veux' });
+  res.json(startJob('ai-director', async (update) => {
+    const data = sanitizeProjectData(JSON.parse(row.data));
+    // the clips already used, plus the 40 most recent ones, with their highlights
+    const used = new Set(data.segments.map((s) => s.clipId));
+    const recent = db.prepare('SELECT * FROM clips WHERE missing = 0 ORDER BY recorded_at DESC LIMIT 40').all();
+    const catalog = [...new Map([...[...used].map((id) => getClip.get(id)).filter(Boolean), ...recent].map((c) => [c.id, c])).values()];
+    for (const [i, clip] of catalog.entries()) {
+      update({ progress: (i / catalog.length) * 0.4, message: `Préparation des clips (${i + 1}/${catalog.length})…` });
+      clip.highlights = (await clipAnalysis(clip).catch(() => ({ highlights: [] }))).highlights;
+    }
+    update({ progress: 0.5, message: 'L’IA prépare le montage…' });
+    const result = await aiFeatures.direct({ project: row, data, catalog, instruction });
+    const latest = getProject.get(row.id);
+    db.prepare(`UPDATE projects SET prev_data = ?, data = ?, updated_at = datetime('now') WHERE id = ?`)
+      .run(latest.data, JSON.stringify(result.data), row.id);
+    return { explanation: result.explanation };
+  }));
+});
+
+app.post('/api/projects/:id/undo', (req, res) => {
+  const row = getProject.get(req.params.id);
+  if (!row?.prev_data) return res.status(400).json({ error: 'Rien à annuler' });
+  db.prepare(`UPDATE projects SET data = prev_data, prev_data = NULL, updated_at = datetime('now') WHERE id = ?`).run(row.id);
+  res.json(projectDetail(row.id));
+});
+
 // ---- Phone access ----------------------------------------------------------------
 
 app.get('/api/remote', localOnly, async (req, res) => res.json(await remoteStatus(PORT)));
@@ -568,6 +792,8 @@ app.listen(PORT, '127.0.0.1', (err) => {
   watchClipsDir();
   scan();
   setInterval(scan, 60_000);
+  cloud.startScheduler();
+  ai.ensureOllama().then((ok) => ok && console.log('IA locale (Ollama) prête'));
   applyListeners(app, PORT).then(() => {
     if (getConfig().remote?.enabled) console.log('Accès téléphone activé (voir Réglages)');
   });

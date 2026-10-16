@@ -391,6 +391,78 @@ $('#sub-run').addEventListener('click', async () => {
   }
 });
 
+// ---------------------------------------------------------------- AI: hooks & assistant
+
+$('#mt-hooks').addEventListener('click', async () => {
+  const btn = $('#mt-hooks');
+  const list = $('#mt-hook-list');
+  btn.disabled = true;
+  try {
+    await save.flush();
+    const job = await api('/api/ai/hooks', { method: 'POST', body: JSON.stringify({ projectId: mt.project.id }) });
+    const { hooks } = await waitJob(job, (j) => { list.innerHTML = `<span class="small muted"><span class="spinner"></span> ${esc(j.message || '')}</span>`; });
+    list.innerHTML = hooks.map((h) => `<button class="chip" data-hook="${esc(h)}">${esc(h)}</button>`).join('')
+      + '<p class="small muted">Clique sur une accroche pour l’ajouter en haut pendant 3 s.</p>';
+  } catch (err) {
+    list.innerHTML = '';
+    toast(err.message.includes('Aucune IA') ? 'Configure d’abord une IA (menu ✨ IA)' : err.message, true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$('#mt-hook-list').addEventListener('click', (e) => {
+  const chip = e.target.closest('[data-hook]');
+  if (!chip) return;
+  mt.project.data.texts.push({
+    id: newId(), text: chip.dataset.hook, start: 0, end: 3, position: 'top', size: 'L', color: '#ffffff', box: true,
+  });
+  renderTexts();
+  changed({ seq: false });
+  toast('Accroche ajoutée');
+});
+
+$('#mt-assistant').addEventListener('click', () => {
+  $('#as-result').hidden = true;
+  $('#as-undo').hidden = !mt.project.canUndo;
+  $('#assistant').showModal();
+  $('#as-input').focus();
+});
+$('[data-close-assistant]').addEventListener('click', () => $('#assistant').close());
+$('#assistant').addEventListener('click', (e) => {
+  const ex = e.target.closest('[data-example]');
+  if (ex) $('#as-input').value = ex.dataset.example;
+});
+
+$('#as-run').addEventListener('click', async () => {
+  const instruction = $('#as-input').value.trim();
+  if (!instruction) return toast('Écris ce que tu veux', true);
+  const btn = $('#as-run');
+  const out = $('#as-result');
+  btn.disabled = true;
+  out.hidden = false;
+  try {
+    await save.flush();
+    const job = await api('/api/ai/director', { method: 'POST', body: JSON.stringify({ projectId: mt.project.id, instruction }) });
+    const r = await waitJob(job, (j) => { out.innerHTML = `<span class="spinner"></span> ${esc(j.message || 'L’IA travaille…')}`; });
+    await reloadProject();
+    out.innerHTML = `✔ ${esc(r.explanation)}`;
+    $('#as-undo').hidden = false;
+  } catch (err) {
+    out.innerHTML = `<span class="status-failed">⚠ ${esc(err.message)}</span>`;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$('#as-undo').addEventListener('click', async () => {
+  await api(`/api/projects/${mt.project.id}/undo`, { method: 'POST' });
+  await reloadProject();
+  $('#as-undo').hidden = true;
+  $('#as-result').hidden = false;
+  $('#as-result').textContent = '↶ Modification annulée';
+});
+
 // ---------------------------------------------------------------- templates
 
 async function renderTemplates() {
